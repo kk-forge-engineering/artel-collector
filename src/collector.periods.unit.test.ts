@@ -6,7 +6,7 @@ import { newHarness, type Harness } from '../tests/harness.js';
 async function eventsAt(harness: Harness, localTimes: string[]): Promise<SentEvent[]> {
   for (const localTime of localTimes) {
     harness.clock.setLocal(localTime);
-    await harness.collector.track('screenshot_taken');
+    await harness.collector.track('report_exported');
     await harness.settle();
   }
   return harness.fetch.events;
@@ -19,13 +19,13 @@ describe('period marks', () => {
     const [first, second] = await eventsAt(harness, ['2026-10-29T10:00:00', '2026-10-29T18:00:00']);
 
     expect(first).toEqual({
-      name: 'screenshot_taken',
+      name: 'report_exported',
       day: '2026-10-29',
       first: ['day', 'week', 'month', 'quarter', 'year'],
       age_days: 0,
       age_months: 0,
     });
-    expect(second).toEqual({ name: 'screenshot_taken', day: '2026-10-29' });
+    expect(second).toEqual({ name: 'report_exported', day: '2026-10-29' });
   });
 
   it.each([

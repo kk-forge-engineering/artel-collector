@@ -24,7 +24,7 @@ const usage = newCollector({
   transport: newHttpTransport('https://intake.example.com/v1/public/relay'),
 });
 
-void usage.track('screenshot_taken', { mode: 'visible' });
+void usage.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
 ```
 
 ### Options
@@ -45,9 +45,9 @@ void usage.track('screenshot_taken', { mode: 'visible' });
 
 ### Methods
 
-Every method returns a promise that resolves and never rejects. A failure goes to `onError`.
+Every method returns a promise that resolves and never rejects. A failure goes to `onError`. So a call whose result you do not wait for is marked `void`, as in the examples.
 
-- `track(name, params?)` records an event. A `params` value is a string up to 64 characters, a number or a boolean on the product's allowlist.
+- `track(name, params?)` records an event. The name and each param name must be on the product's allowlist and match this form: a lowercase letter, then lowercase letters, digits and `_`, up to 40 characters. A param value is a string up to 64 characters, a number or a boolean.
 - `installed()` sends `installed` once per install. A later call sends no event.
 - `updated()` sends `updated` when `version` differs from the last version seen. Call it after `installed()`, so that a fresh install does not also count as an update.
 - `setEnabled(on)` with `false` drops the events not sent yet, sends `usage_counts_off` and stops sending. With `true` it sends `usage_counts_on`. The choice persists.
@@ -139,7 +139,7 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
 });
 
 // content script
-void forwardTrack('editor_opened', { source: 'shortcut' });
+void forwardTrack('link_shared', { target: 'clipboard' });
 ```
 
 ## What is sent
@@ -156,11 +156,11 @@ One envelope per request:
   "batch": "9f2c41d07ab35e18",
   "events": [
     {
-      "name": "screenshot_taken",
+      "name": "report_exported",
       "day": "2026-10-29",
       "first": ["day", "week"],
       "age_days": 3,
-      "params": { "mode": "visible" }
+      "params": { "format": "pdf", "pages": 12, "with_images": true }
     }
   ]
 }

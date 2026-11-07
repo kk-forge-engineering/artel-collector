@@ -6,7 +6,7 @@ describe('the request', () => {
   it('posts the envelope as text/plain with keepalive to the endpoint', async () => {
     const harness = newHarness();
 
-    await harness.collector.track('screenshot_taken', { mode: 'visible', count: 2, pinned: false });
+    await harness.collector.track('report_exported', { format: 'pdf', pages: 2, with_images: false });
     await harness.settle();
 
     const [request] = harness.fetch.requests;
@@ -17,7 +17,7 @@ describe('the request', () => {
       keepalive: true,
     });
     expect(request?.envelope).toMatchObject({ key: KEY, platform: 'extension', version: VERSION, lang: 'en' });
-    expect(request?.envelope.events[0]?.params).toEqual({ mode: 'visible', count: 2, pinned: false });
+    expect(request?.envelope.events[0]?.params).toEqual({ format: 'pdf', pages: 2, with_images: false });
   });
 
   it('hands the envelope to the transport the host gives', async () => {

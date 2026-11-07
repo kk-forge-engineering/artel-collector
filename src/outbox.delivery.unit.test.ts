@@ -243,7 +243,7 @@ describe('batch key', () => {
       },
     });
 
-    await harness.collector.track('a', { mode: 'visible' });
+    await harness.collector.track('a', { format: 'pdf' });
     await harness.settle();
 
     expect(bodies).toHaveLength(2);

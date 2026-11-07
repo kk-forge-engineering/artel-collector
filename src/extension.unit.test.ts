@@ -123,14 +123,14 @@ describe('forwarding from a content script', () => {
     const harness = newHarness();
     const stop = acceptForwarded(harness.collector);
 
-    await forwardTrack('editor_opened', { source: 'shortcut' });
+    await forwardTrack('link_shared', { target: 'clipboard' });
     await harness.settle();
     stop();
-    await forwardTrack('editor_closed');
+    await forwardTrack('link_opened');
     await harness.settle();
 
     expect(harness.fetch.events.map((event) => [event.name, event.params])).toEqual([
-      ['editor_opened', { source: 'shortcut' }],
+      ['link_shared', { target: 'clipboard' }],
     ]);
   });
 
@@ -321,7 +321,7 @@ describe('forwarding from a content script', () => {
   it('resolves in the content script when the worker cannot be reached', async () => {
     stubChrome().isWorkerGone = true;
 
-    await expect(forwardTrack('editor_opened')).resolves.toBeUndefined();
+    await expect(forwardTrack('link_shared')).resolves.toBeUndefined();
   });
 });
 

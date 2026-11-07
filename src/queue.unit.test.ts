@@ -52,7 +52,12 @@ describe('stored queue', () => {
 
   it('seals the same body again after a round trip through storage', async () => {
     const queue = newQueue({ storage: newMemoryStorage(), reportError: () => undefined });
-    await queue.add(FIELDS, { ...EVENT, first: ['day'], age_days: 3, params: { mode: 'visible', n: 2, ok: true } });
+    await queue.add(FIELDS, {
+      ...EVENT,
+      first: ['day'],
+      age_days: 3,
+      params: { format: 'pdf', pages: 2, with_images: true },
+    });
     const [item] = await queue.lease(FIRST_LEASE);
     const sealed = await queue.seal(item?.qid ?? '', FIRST_LEASE);
 

@@ -76,7 +76,7 @@ describe('newWebLock', () => {
 describe('pageFields', () => {
   it('gives the path and the host of a referring site', () => {
     vi.stubGlobal('location', { pathname: '/products/editor', hostname: 'example.com' });
-    vi.stubGlobal('document', new FakeDocument('https://www.google.com/search?q=screenshot'));
+    vi.stubGlobal('document', new FakeDocument('https://www.google.com/search?q=report'));
 
     expect(pageFields()).toEqual({ page: '/products/editor', referrer: 'www.google.com' });
   });
