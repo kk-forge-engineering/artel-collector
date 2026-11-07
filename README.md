@@ -34,7 +34,7 @@ void usage.track('report_exported', { format: 'pdf', pages: 12, with_images: tru
 - `version`: the product version, such as `1.2.3` or `1.2.3-beta.1`, up to 32 characters.
 - `lang`: the interface language as a BCP 47 code, such as `en` or `pt-BR`. Optional.
 - `storage`: where the collector keeps its state. See "Storage".
-- `transport`: `newHttpTransport(endpoint)`, or a function that delivers the envelope body. It resolves within 30 seconds to the intake's HTTP status, or to `0` when the request did not reach the intake.
+- `transport`: `newHttpTransport(endpoint)`, which posts without cookies or a referrer, or a function that delivers the envelope body. It resolves within 30 seconds to the intake's HTTP status, or to `0` when the request did not reach the intake.
 - `getId`: returns the user's id in a `full` channel once they consented, or `undefined`. The collector never creates an id.
 - `getPage`: returns `{ page, referrer }` for an event of a site channel, the path without the query string and the referring host. The collector reads no page itself, and cuts the two to 256 and 128 characters.
 - `lock`: runs an operation while no other context that shares `storage` runs one, such as `newWebLock()` from the web module. Without it, two contexts recording at once may both mark the first event of a day, or overwrite each other's queued events.

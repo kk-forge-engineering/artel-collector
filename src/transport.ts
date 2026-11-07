@@ -30,6 +30,11 @@ export function newHttpTransport(
         // This type skips a CORS preflight. The intake reads the body as JSON.
         headers: { 'content-type': 'text/plain;charset=UTF-8' },
         body,
+        // An extension with host access, or a page on the intake's own origin, would otherwise send the user's cookies
+        // for that host. The intake reads none.
+        credentials: 'omit',
+        // A page's own policy could otherwise send its full address, which `getPage` exists to keep out.
+        referrerPolicy: 'no-referrer',
         keepalive: true,
         signal: timeout.signal,
       });

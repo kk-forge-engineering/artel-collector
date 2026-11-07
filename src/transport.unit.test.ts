@@ -14,6 +14,20 @@ describe('newHttpTransport', () => {
     await expect(transport('{}')).resolves.toBe(0);
   });
 
+  it('sends no cookies and no referrer, so neither a session nor a page address reaches the intake', async () => {
+    let sent: RequestInit | undefined;
+    const transport = newHttpTransport(ENDPOINT, {
+      fetch: async (_, init) => {
+        sent = init;
+        return new Response(undefined, { status: 204 });
+      },
+    });
+
+    await transport('{}');
+
+    expect(sent).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer' });
+  });
+
   it('resolves to 0 when the intake does not answer within 30 seconds', async () => {
     const clock = new FakeClock('2026-10-29T10:00:00');
     const transport = newHttpTransport(ENDPOINT, {
