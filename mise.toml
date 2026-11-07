@@ -1,0 +1,45 @@
+# Tools and tasks of the repo. `mise tasks` lists them.
+
+[tools]
+node = "26"
+
+[tasks.setup]
+description = "Install the npm packages"
+run = "npm ci"
+
+[tasks.check]
+description = "The gate before a commit: every linter, the build and every test"
+depends = ["lint", "build", "test"]
+
+[tasks."check:ci"]
+description = "check with coverage, its 80% floor and the SonarQube reports, as CI runs it"
+depends = ["lint", "build", "test:ci"]
+
+[tasks.lint]
+description = "Every linter: types, oxlint and format"
+run = "npm run lint"
+
+[tasks."lint:fix"]
+description = "Every linter's fix: oxlint and format"
+run = "npm run lint:fix"
+
+[tasks.build]
+description = "The package's dist/"
+run = "npm run build"
+
+[tasks.test]
+description = "Every test suite"
+run = "npm test"
+
+[tasks."test:unit"]
+description = "The unit tests"
+run = "npm run test:unit"
+
+[tasks."test:ci"]
+description = "Every test suite with coverage and the SonarQube reports"
+run = "npm run test:ci"
+
+[tasks.version]
+description = "The package's version, X.Y.Z on one line"
+quiet = true
+run = "node -p \"require('./package.json').version\""

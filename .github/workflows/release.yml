@@ -1,0 +1,124 @@
+# Releases the package from main: a commit whose package.json version has no tag yet is checked, published to npm and
+# tagged v<version> with a GitHub Release. npm trusts the publish job by this file's name and its environment
+# (Trusted Publisher), so no token is stored, and npm adds provenance. Only the publish job can mint the OIDC token,
+# and it runs no dependency code.
+name: Release
+on:
+  push:
+    branches: [main]
+permissions: {}
+# Releases run one at a time, so a run that waited finds the tag the run before it created.
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tags show whether this version is released already.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - name: Pick the version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(mise run --quiet version)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::mise run version printed «${version}», not one X.Y.Z line"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          # A tag is never moved. A merge that keeps the version releases nothing and stays green.
+          if tagged=$(git rev-parse -q --verify "refs/tags/v$version^{commit}"); then
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "v$version is already released from this commit"
+            else
+              echo "::warning::v$version is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version in package.json."
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Releasing v$version"
+          echo "release=true" >>"$GITHUB_OUTPUT"
+
+  check:
+    needs: version
+    if: ${{ needs.version.outputs.release == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - run: mise run setup
+      - run: mise run check
+
+  # The tarball comes from a job apart from the checks, which run the code of every devDependency. Here the install
+  # runs no package scripts, and the build in prepack runs only tsc.
+  pack:
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm pack
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: '*.tgz'
+          if-no-files-found: error
+
+  publish:
+    needs: pack
+    # npm accepts the OIDC token only from a GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    # Its required reviewers approve each release before the job can mint the token.
+    environment: production
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+      # Trusted publishing needs npm 11.5.1 or later, which Node 26 ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          package-manager-cache: false
+      - run: npm publish ./*.tgz --ignore-scripts
+
+  tag:
+    needs: [version, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # The Release API creates the tag on this commit, so no step runs git with the write token.
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes "https://www.npmjs.com/package/@kk-forge/artel-collector/v/$VERSION"

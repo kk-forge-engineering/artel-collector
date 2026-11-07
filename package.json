@@ -1,0 +1,58 @@
+{
+  "name": "@kk-forge/artel-collector",
+  "version": "0.1.0",
+  "description": "Sends a product's usage events to the intake service",
+  "license": "MIT",
+  "author": "KK Forge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kk-forge-engineering/artel-collector.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/exports.js",
+  "types": "./dist/exports.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/exports.d.ts",
+      "default": "./dist/exports.js"
+    },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "default": "./dist/web.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "default": "./dist/extension.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "npm run build",
+    "build": "node --eval \"process.getBuiltinModule('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "lint": "npm run lint:tsc && npm run lint:oxlint && npm run lint:format",
+    "lint:fix": "npm run lint:oxlint:fix && npm run lint:format:fix",
+    "lint:tsc": "tsc --noEmit",
+    "lint:oxlint": "oxlint --type-aware --deny-warnings src tests",
+    "lint:oxlint:fix": "oxlint --type-aware --fix src tests",
+    "lint:format": "oxfmt --check .",
+    "lint:format:fix": "oxfmt .",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "test:ci": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.5",
+    "oxfmt": "^0.73.0",
+    "oxlint": "^1.90.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "vitest-sonar-reporter": "^3.0.0"
+  }
+}
