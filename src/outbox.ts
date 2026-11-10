@@ -1,50 +1,74 @@
 import type { Clock, TimerHandle } from './clock.js';
 import { daysBetween, parseDay, utcDateAt, type CalendarDate } from './calendar.js';
 import type { Envelope, UsageEvent } from './envelope.js';
+import { quoted } from './hostInput.js';
 import type { Lock } from './lock.js';
-import { newQueue, newRandomId, type LeaseTerms, type QueuedEnvelope } from './queue.js';
+import {
+  newQueue,
+  newRandomId,
+  type Identity,
+  type LeaseTerms,
+  type QueuedEnvelope,
+  type SealedEnvelope,
+} from './queue.js';
 import type { StorageAdapter } from './storage.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportResult } from './transport.js';
 
 const RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+/** Names the stored time, in epoch milliseconds, before which no context that shares the storage starts a send. */
+const RETRY_AT_KEY = 'retry_at';
 /**
  * The time one send holds the lease on a queued envelope, twice the 30 s request limit of `newHttpTransport` in
  * `src/transport.ts`. The send renews the lease before each request. A host that stops mid-send blocks the envelope
  * only until its lease ends.
  */
 const LEASE_MS = 60_000;
+/**
+ * The longest the outbox waits for a transport's answer, a little over the 30 s a transport must answer in. A request
+ * that took longer counts as status 0, so a broken transport stops no send, `flush`, `forget` or opt-out for good.
+ */
+const TRANSPORT_LIMIT_MS = 35_000;
+const MAX_HTTP_STATUS = 599;
 
 /**
  * Holds the envelopes on their way to the intake. They leave one at a time, in the order they were made. An envelope
- * the intake cannot take now goes again later, and each wait doubles, up to five minutes.
+ * the intake cannot take now goes again later, and each wait doubles, up to five minutes. A longer `Retry-After` of a
+ * 429 or 503 sets the wait instead. Every context that shares the storage keeps the longest wait any of them stored.
  */
-export interface Outbox {
+interface Outbox {
   /**
    * Queues the event and sends it within the send delay, at once when its envelope is full, or with the pending retry.
+   * Resolves to what the queue dropped to take it, whose marks may go back.
    */
-  add(fields: Omit<Envelope, 'events'>, event: UsageEvent): Promise<void>;
+  add(fields: Omit<Envelope, 'events'>, event: UsageEvent, options?: { awaitsId?: boolean }): Promise<QueuedEnvelope[]>;
   /** Sends what is queued within the send delay, such as what an earlier run of the host left. */
   sendSoon(): void;
-  /** Sends what is queued now, in turn after any send in progress. */
+  /** Sends what is queued now, in turn after any send in progress, or once the retry wait is over. */
   send(): Promise<void>;
-  /** Drops every envelope not sent yet and cancels the next retry. */
-  discard(): Promise<void>;
-  /** Drops the envelopes of this id. */
-  forget(id: string): Promise<void>;
+  /**
+   * Drops every envelope not sent yet but those of an `opted_out`. Resolves to those whose marks may go back, as
+   * `src/queue.ts` describes.
+   */
+  discard(): Promise<QueuedEnvelope[]>;
+  /** Drops the envelopes of this id. Resolves to all of them, since the intake deletes their events too. */
+  forget(id: string): Promise<QueuedEnvelope[]>;
+  /** Drops the envelopes that name a user or that await an id. Resolves to those whose marks may go back. */
+  discardIdentified(): Promise<QueuedEnvelope[]>;
   /** Resolves once the send in progress, if any, has ended. */
   settled(): Promise<void>;
 }
 
 /**
- * Expects the caller to run `add`, `discard` and `forget` inside its own `lock`, which it holds for the whole recording
- * of an event. The sends take the lock themselves.
+ * Expects the caller to run `add`, `discard`, `forget` and `discardIdentified` inside its own `lock`, which it holds
+ * for the whole recording of an event. The sends take the lock themselves.
  */
 export function newOutbox({
   storage,
   lock,
   transport,
-  getId,
+  identify,
+  giveBack,
   sendDelayMs,
   clock,
   reportError,
@@ -54,7 +78,15 @@ export function newOutbox({
   transport: Transport;
   /** The longest an event waits in the queue before a send starts. */
   sendDelayMs: number;
-  getId: (() => string | undefined | Promise<string | undefined>) | undefined;
+  /**
+   * Resolves to the user that an envelope awaiting an id will name, or to undefined while the product does not know the
+   * id yet. The envelope then stays queued. It takes `lock` itself, so the outbox calls it outside the lock.
+   */
+  identify: () => Promise<Identity | undefined>;
+  /**
+   * Gives back the marks of an envelope too old to send that no request carried. The outbox calls it under `lock`.
+   */
+  giveBack: (items: readonly QueuedEnvelope[]) => Promise<void>;
   clock: Clock;
   reportError: (error: unknown) => void;
 }): Outbox {
@@ -70,7 +102,7 @@ export function newOutbox({
 
   function reportDropped(count: number): void {
     if (count > 0) {
-      reportError(new Error(`artel: ${count} queued events dropped as too old or under a withdrawn id`));
+      reportError(new Error(`artel: ${count} queued events dropped as too old`));
     }
   }
 
@@ -97,9 +129,10 @@ export function newOutbox({
     }
     clock.clearTimeout(sendTimer);
     sendDue = clock.now() + delayMs;
-    sendTimer = clock.setTimeout(() => void send(), delayMs);
+    sendTimer = clock.setTimeout(() => void sendUnlessRetryPending(), delayMs);
   }
 
+  /** Sends at once, cancelling a pending retry, as `flush` and a retry timer do. */
   function send(): Promise<void> {
     cancelSend();
     cancelRetry();
@@ -107,9 +140,56 @@ export function newOutbox({
     return sending;
   }
 
-  /** Leases what is queued and sends it. An envelope not settled when the send stops goes back to the queue. */
+  /**
+   * Sends in turn after any send in progress, unless that send failed and left a retry pending. The intake asked the
+   * outbox to wait, and the retry carries these events too.
+   */
+  function sendUnlessRetryPending(): Promise<void> {
+    cancelSend();
+    sending = sending.then(async () => (retryTimer === undefined ? sendLeased() : undefined)).catch(reportError);
+    return sending;
+  }
+
+  /**
+   * Resolves to the time left of the retry wait any context stored. A stored wait longer than five minutes, as after a
+   * clock set back, or a value another script wrote that is no time, is reported and stored again as five minutes from
+   * now, so it holds no send for longer. The caller holds `lock`.
+   */
+  async function retryWaitMs(): Promise<number> {
+    const stored = (await storage.get(RETRY_AT_KEY)) ?? '';
+    const waitMs = Math.max(0, Number(stored) - clock.now());
+    if (waitMs <= MAX_RETRY_DELAY_MS) {
+      return waitMs;
+    }
+    reportError(
+      new Error(
+        `artel: the stored retry wait ${quoted(stored)} is no time within five minutes, so the wait is five minutes`,
+      ),
+    );
+    await storage.set(RETRY_AT_KEY, String(clock.now() + MAX_RETRY_DELAY_MS));
+    return MAX_RETRY_DELAY_MS;
+  }
+
+  /** Stores a retry wait of `waitMs` from now, unless a longer one is stored. The caller holds `lock`. */
+  async function keepRetryWait(waitMs: number): Promise<void> {
+    const longest = Math.max(waitMs, await retryWaitMs());
+    await storage.set(RETRY_AT_KEY, String(clock.now() + longest));
+  }
+
+  /**
+   * Leases what is queued and sends it, or schedules the send for the end of the retry wait. An envelope not settled
+   * when the send stops goes back to the queue.
+   */
   async function sendLeased(): Promise<void> {
-    const leased = await lock(async () => queue.lease(leaseTerms()));
+    const { leased, waitMs } = await lock(async () => {
+      const wait = await retryWaitMs();
+      return { waitMs: wait, leased: wait > 0 ? undefined : await queue.lease(leaseTerms()) };
+    });
+    if (leased === undefined) {
+      // The pending retry of this context sends at the end of the wait. Without one, a send of its own does.
+      sendWithin(waitMs);
+      return;
+    }
     const unsettled = new Set(leased.map((item) => item.qid));
     try {
       await sendInOrder(leased, unsettled);
@@ -121,108 +201,170 @@ export function newOutbox({
   }
 
   /**
+   * Seals the envelope for its request, or resolves to undefined when it does not go now. An envelope gone from the
+   * queue, or one another holder took, is settled. One that waits for an id the product does not know yet stays leased
+   * until the send ends.
+   */
+  async function sealIfItMayLeave(item: QueuedEnvelope, unsettled: Set<string>): Promise<SealedEnvelope | undefined> {
+    const identity = item.awaitsId === true ? await identify() : undefined;
+    if (item.awaitsId === true && identity === undefined) {
+      return undefined;
+    }
+    const sealed = await lock(async () => queue.seal(item.qid, leaseTerms(), identity));
+    if (sealed === undefined) {
+      unsettled.delete(item.qid);
+    }
+    return sealed;
+  }
+
+  /**
    * Sends the envelopes in order. The function seals and reads each one just before its request, so the request carries
    * every event added since the lease. From the first envelope the intake cannot take now, the rest wait for a retry.
    */
   async function sendInOrder(leased: QueuedEnvelope[], unsettled: Set<string>): Promise<void> {
-    const mayGo = sendableCheck({ id: await getId?.(), today: utcDateAt(clock.now()) });
+    const today = utcDateAt(clock.now());
     for (const item of leased) {
-      const sealed = await lock(async () => queue.seal(item.qid, leaseTerms()));
+      const sealed = await sealIfItMayLeave(item, unsettled);
       if (sealed === undefined) {
-        unsettled.delete(item.qid);
         continue;
       }
       // An envelope goes whole or not at all. The intake drops a repeat only when it matches the first body byte for
       // byte, and a repeat with fewer events would not match.
-      const { envelope, body } = sealed;
-      const isFresh = envelope.events.every((event) => mayGo(envelope, event));
-      if (!isFresh) {
+      const { envelope, body, isRepeat } = sealed;
+      if (!envelope.events.every((event) => isRecent(event, today))) {
         reportDropped(envelope.events.length);
+        await lock(async () => {
+          await queue.remove(item.qid);
+          await giveBack(isRepeat ? [] : [{ ...item, envelope }]);
+        });
+        unsettled.delete(item.qid);
+        continue;
       }
-      if (isFresh && !(await deliver({ body, transport, reportError }))) {
-        // An event that came during the request armed a send. The retry carries that event, so the intake gets its
-        // wait.
+      const { isSettled, askedWaitMs } = await deliver({ body, transport, reportError, clock });
+      if (!isSettled) {
+        // The retry carries the events that came during the request. A send they armed skips its turn while the
+        // retry is pending.
         cancelSend();
         cancelRetry();
-        retryTimer = clock.setTimeout(() => void send(), retryDelay);
+        const waitMs = Math.min(Math.max(retryDelay, askedWaitMs ?? 0), MAX_RETRY_DELAY_MS);
+        retryTimer = clock.setTimeout(() => void send(), waitMs);
         retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
+        await lock(async () => keepRetryWait(waitMs));
         return;
       }
       await lock(async () => queue.remove(item.qid));
       unsettled.delete(item.qid);
     }
     retryDelay = RETRY_DELAY_MS;
-    // A failed send may have armed a retry while this send waited its turn. An event that came meanwhile armed no send
-    // of its own, so it gets one now.
-    if (retryTimer !== undefined) {
-      cancelRetry();
-      sendWithin(sendDelayMs);
-    }
   }
 
   return {
-    add: async (fields, event) => {
-      const isFull = await queue.add(fields, event);
+    add: async (fields, event, options) => {
+      const { isFull, dropped } = await queue.add(fields, event, options);
       // A full envelope goes at once. Otherwise the send waits, so that the events of the next few seconds share one
       // request.
       sendWithin(isFull ? 0 : sendDelayMs);
+      return dropped;
     },
     sendSoon: () => sendWithin(sendDelayMs),
     send,
-    discard: async () => {
-      cancelRetry();
-      // A send in progress holds leases on what it took. Dropping those envelopes here keeps that send from sending
-      // them again.
-      await queue.clear();
-    },
+    // A send in progress holds leases on what it took. Dropping those envelopes here keeps that send from sending them
+    // again.
+    discard: () => queue.removeAllButOptOuts(),
     forget: (id) => queue.removeId(id),
+    discardIdentified: () => queue.removeIdentified(),
     settled: () => sending,
   };
 }
 
 /**
- * Sends one envelope, and resolves to false when it must go again later: on 429, a rate limit, on 5xx, a store that
- * missed the write, or on status 0, which a browser also gives for a refusal without CORS headers. Any other 4xx means
- * a wrong envelope or channel, so a retry would fail the same way.
+ * Sends one envelope, and resolves to whether it is settled. It is not on 429, a rate limit, on 5xx, a store that
+ * missed the write, or on status 0, which a browser also gives for a refusal without CORS headers. Then it resolves to
+ * the wait the `Retry-After` of a 429 or 503 asks for too. Any other status outside 2xx means a wrong envelope or
+ * channel, so a retry would fail the same way.
  */
 async function deliver({
   body,
   transport,
   reportError,
+  clock,
 }: {
   body: string;
   transport: Transport;
   reportError: (error: unknown) => void;
-}): Promise<boolean> {
-  let status: number;
-  try {
-    status = await transport(body);
-  } catch {
-    status = 0;
+  clock: Clock;
+}): Promise<{ isSettled: boolean; askedWaitMs?: number | undefined }> {
+  const result = await answerOf(transport, body, clock);
+  const status = httpStatus(result.status, reportError);
+  if (status === 429 || status === 503) {
+    return { isSettled: false, askedWaitMs: retryAfterMs(result.retryAfter, clock.now()) };
   }
-  if (status === 0 || status === 429 || status >= 500) {
-    return false;
+  if (status === 0 || status >= 500) {
+    return { isSettled: false };
   }
   if (status < 200 || status >= 300) {
     reportError(new Error(`artel: intake answered ${status}`));
   }
-  return true;
+  return { isSettled: true };
 }
 
 /**
- * Returns the check whether an event may still go: its envelope carries no id or the current `id`, and its day is UTC
- * yesterday or later. The intake moves an older day to its own today, and first-of-period marks would count the user
- * twice. An old id may belong to a user who withdrew consent and was forgotten.
+ * Returns the status, or reports a value that is not a whole number from 0 to 599 and returns 0, a failed request.
+ * Only a product's own transport, outside TypeScript or with a bug, gives such a value.
  */
-function sendableCheck({
-  id,
-  today,
-}: {
-  id: string | undefined;
-  today: CalendarDate;
-}): (envelope: Envelope, event: UsageEvent) => boolean {
-  return (envelope, event) => {
-    const day = parseDay(event.day);
-    return (envelope.id === undefined || envelope.id === id) && day !== undefined && daysBetween(day, today) <= 1;
-  };
+function httpStatus(status: unknown, reportError: (error: unknown) => void): number {
+  if (typeof status === 'number' && Number.isInteger(status) && status >= 0 && status <= MAX_HTTP_STATUS) {
+    return status;
+  }
+  reportError(new Error('artel: the transport answered a status that is no whole number from 0 to 599, read as 0'));
+  return 0;
+}
+
+/**
+ * Resolves to the transport's answer, or to status 0 for a transport that throws, rejects or answers too late, or that
+ * answers null or undefined, as only a product's own transport outside TypeScript does.
+ */
+async function answerOf(
+  transport: Transport,
+  body: string,
+  clock: Clock,
+): Promise<{ status: number; retryAfter?: string | undefined }> {
+  let timer: TimerHandle | undefined;
+  const late = new Promise<TransportResult>((resolve) => {
+    timer = clock.setTimeout(() => resolve({ status: 0 }), TRANSPORT_LIMIT_MS);
+  });
+  try {
+    const answer = await Promise.race([transport(body), late]);
+    // A null or undefined answer throws here, and reads as status 0.
+    return typeof answer === 'number' ? { status: answer } : { status: answer.status, retryAfter: answer.retryAfter };
+  } catch {
+    return { status: 0 };
+  } finally {
+    clock.clearTimeout(timer);
+  }
+}
+
+/**
+ * Returns the wait a `Retry-After` value asks for at `now`, in milliseconds: its delta-seconds, or the time to its HTTP
+ * date, none for a date in the past. Returns undefined for a missing or invalid value, or one that is no string, which
+ * only a product's own transport outside TypeScript gives.
+ */
+function retryAfterMs(value: unknown, now: number): number | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  if (/^\d+$/.test(value)) {
+    return Number(value) * 1_000;
+  }
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? Math.max(0, time - now) : undefined;
+}
+
+/**
+ * Tells whether an event may still go: its day is UTC yesterday or later. The intake moves an older day to its own
+ * today, and first-of-period marks would count the user twice.
+ */
+function isRecent(event: UsageEvent, today: CalendarDate): boolean {
+  const day = parseDay(event.day);
+  return day !== undefined && daysBetween(day, today) <= 1;
 }

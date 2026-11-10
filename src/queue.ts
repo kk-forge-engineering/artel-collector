@@ -1,7 +1,7 @@
-import type { Envelope, UsageEvent } from './envelope.js';
+import { LifecycleEvent, type Envelope, type UsageEvent } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
 
-const QUEUE_KEY = 'artel.queue';
+const QUEUE_KEY = 'queue';
 const MAX_ENVELOPE_EVENTS = 100;
 /**
  * The largest request body, under 64 KiB with some margin. A keepalive request and the intake both refuse a larger
@@ -9,6 +9,11 @@ const MAX_ENVELOPE_EVENTS = 100;
  */
 const MAX_ENVELOPE_BYTES = 60_000;
 const MAX_QUEUED_ENVELOPES = 20;
+/**
+ * The most `opted_out` envelopes the queue keeps. The cap of 20 never drops one, so without this limit opt-outs that
+ * never went could fill the queue, and the cap would then drop every new envelope.
+ */
+const MAX_QUEUED_OPT_OUTS = 2;
 
 export interface QueuedEnvelope {
   qid: string;
@@ -21,13 +26,25 @@ export interface QueuedEnvelope {
   leasedBy?: string;
   /** The time the lease ends, in epoch milliseconds. */
   leasedUntil?: number;
+  /** Marks an identified envelope whose user the product does not know yet. It waits for the id and goes with it. */
+  awaitsId?: true;
+  /** Marks the envelope of an `opted_out`, which the intake takes only alone. No other event joins it. */
+  isOptOut?: true;
   envelope: Envelope;
+}
+
+/** The user that an identified envelope names, known once the product knows the id. */
+export interface Identity {
+  id: string;
+  browser?: Envelope['browser'];
 }
 
 /** Holds a sealed envelope and the body each send attempt carries. */
 export interface SealedEnvelope {
   envelope: Envelope;
   body: string;
+  /** Whether an earlier seal stored the body, so a request may have carried it to the intake. */
+  isRepeat: boolean;
 }
 
 /** Names the lease holder, the time of the call and the time the lease ends. Both times are in epoch milliseconds. */
@@ -39,36 +56,46 @@ export interface LeaseTerms {
 
 /**
  * Keeps envelopes in storage until the intake takes them, so a host that stops, such as an idle extension service
- * worker, loses none. Past 20, the queue drops the oldest and reports them. Each method reads then writes, so the
- * caller holds a lock around each call.
+ * worker, loses none. A method that drops envelopes resolves to those whose marks may go back: the ones no seal stored
+ * a body for, since the intake may keep a request that failed for the sender. `removeId` resolves to all of them.
  */
-export interface Queue {
+interface Queue {
   /**
    * Adds the event to the newest envelope with the same fields while it has no body and stays within 100 events and 60
-   * kB, else to a new one. Resolves to true once that envelope holds 100 events. Drops and reports an event that alone
-   * passes 60 kB.
+   * kB, else to a new one. An `opted_out` takes an envelope of its own. Resolves to whether that envelope holds 100
+   * events, and to what the queue dropped: the oldest envelope past 20.
    */
-  add(fields: Omit<Envelope, 'events'>, event: UsageEvent): Promise<boolean>;
+  add(
+    fields: Omit<Envelope, 'events'>,
+    event: UsageEvent,
+    options?: { awaitsId?: boolean },
+  ): Promise<{ isFull: boolean; dropped: QueuedEnvelope[] }>;
   /**
    * Leases to `holder`, until `until`, every envelope no other holder has a current lease on. Resolves to them, oldest
    * first.
    */
   lease(terms: LeaseTerms): Promise<QueuedEnvelope[]>;
   /**
-   * Seals one envelope before its request and extends the lease of `holder`. The first seal stores the body, with the
-   * queue id as `batch`. Resolves to undefined when the envelope is gone or another holder took it, as after an
-   * opt-out, a forget or an expired lease.
+   * Seals one envelope before its request and extends the lease of `holder`. An envelope that awaits an id takes
+   * `identity` first. The first seal stores the body, with the queue id as `batch`. Resolves to undefined when the
+   * envelope is gone or another holder took it, as after an opt-out, a forget or an expired lease.
    */
-  seal(qid: string, terms: LeaseTerms): Promise<SealedEnvelope | undefined>;
+  seal(qid: string, terms: LeaseTerms, identity?: Identity): Promise<SealedEnvelope | undefined>;
   /** Drops an envelope the intake took or refused for good. */
   remove(qid: string): Promise<void>;
   /** Ends the lease of `holder` on these envelopes, which keep their place. */
   release(holder: string, qids: readonly string[]): Promise<void>;
-  /** Drops the envelopes that carry this id. */
-  removeId(id: string): Promise<void>;
-  clear(): Promise<void>;
+  /**
+   * Drops the envelopes that carry this id, as when the host forgets the user. Resolves to all of them, since the
+   * intake deletes their events too.
+   */
+  removeId(id: string): Promise<QueuedEnvelope[]>;
+  /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
+  removeIdentified(): Promise<QueuedEnvelope[]>;
+  removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
 }
 
+/** Returns a queue in `storage`. The caller holds a lock around each call. */
 export function newQueue({
   storage,
   reportError,
@@ -76,52 +103,103 @@ export function newQueue({
   storage: StorageAdapter;
   reportError: (error: unknown) => void;
 }): Queue {
+  /**
+   * Returns the stored envelopes. A stored queue that is no JSON list is reported once and dropped. An item without a
+   * queue id and an envelope with a list of events is skipped, so a value another script wrote never makes a method
+   * throw.
+   */
   async function read(): Promise<QueuedEnvelope[]> {
-    const stored = await storage.get(QUEUE_KEY);
+    const stored = (await storage.get(QUEUE_KEY)) ?? '[]';
+    let queued: unknown;
     try {
-      const queued: unknown = JSON.parse(stored ?? '[]');
-      return Array.isArray(queued) ? queued.filter(isQueuedEnvelope) : [];
-    } catch (error) {
-      // The function drops a queue that does not parse, so new events still go out. No envelope in such a queue could
-      // be sent.
-      reportError(error);
+      queued = JSON.parse(stored);
+    } catch {
+      // The check below reports its own error and drops the parser's error. The parser's message quotes the stored
+      // text, which may hold an id or a page.
+    }
+    if (!Array.isArray(queued)) {
+      reportError(new Error('artel: the stored queue is not a JSON list, so it was dropped'));
+      await write([]);
       return [];
     }
+    return queued.filter(isQueuedEnvelope);
   }
 
   async function write(items: QueuedEnvelope[]): Promise<void> {
-    const dropped = items.length - MAX_QUEUED_ENVELOPES;
-    if (dropped > 0) {
-      reportError(new Error(`artel: the intake stayed unavailable, ${dropped} oldest envelopes dropped`));
+    await storage.set(QUEUE_KEY, JSON.stringify(items));
+  }
+
+  /**
+   * Keeps the newest two `opted_out` envelopes, and then the newest other envelopes while the queue holds at most 20,
+   * and reports what it drops. Returns the kept envelopes, and the other dropped ones that no request carried, since an
+   * `opted_out` carries no marks.
+   */
+  function withinCaps(items: readonly QueuedEnvelope[]): { kept: QueuedEnvelope[]; dropped: QueuedEnvelope[] } {
+    const optOuts = items.filter((item) => item.isOptOut === true);
+    const others = items.filter((item) => item.isOptOut !== true);
+    const droppedOptOuts = optOuts.slice(0, Math.max(0, optOuts.length - MAX_QUEUED_OPT_OUTS));
+    const keptOptOuts = optOuts.length - droppedOptOuts.length;
+    const dropped = others.slice(0, Math.max(0, others.length - Math.max(0, MAX_QUEUED_ENVELOPES - keptOptOuts)));
+    if (droppedOptOuts.length > 0) {
+      reportError(
+        new Error(
+          `artel: the queue holds at most ${MAX_QUEUED_OPT_OUTS} opted_out envelopes, so the oldest ${droppedOptOuts.length} were dropped`,
+        ),
+      );
     }
-    await storage.set(QUEUE_KEY, JSON.stringify(items.slice(Math.max(0, dropped))));
+    if (dropped.length > 0) {
+      reportError(
+        new Error(
+          `artel: the queue holds at most ${MAX_QUEUED_ENVELOPES} envelopes, so the oldest ${dropped.length} were dropped`,
+        ),
+      );
+    }
+    const gone = new Set([...droppedOptOuts, ...dropped]);
+    return { kept: items.filter((item) => !gone.has(item)), dropped: unsent(dropped) };
   }
 
   async function update(change: (items: QueuedEnvelope[]) => QueuedEnvelope[]): Promise<void> {
     await write(change(await read()));
   }
 
+  /** Drops the envelopes `isDropped` picks and resolves to them. Writes nothing when it picks none. */
+  async function removeWhere(isDropped: (item: QueuedEnvelope) => boolean): Promise<QueuedEnvelope[]> {
+    const items = await read();
+    const dropped = items.filter(isDropped);
+    if (dropped.length > 0) {
+      await write(items.filter((item) => !isDropped(item)));
+    }
+    return dropped;
+  }
+
   return {
-    add: async (fields, event) => {
-      if (!fits({ ...fields, events: [] }, event)) {
-        reportError(new Error(`artel: event ${event.name} passes ${MAX_ENVELOPE_BYTES} bytes and was dropped`));
-        return false;
-      }
+    add: async (fields, event, { awaitsId = false } = {}) => {
+      const isOptOut = event.name === LifecycleEvent.OptedOut;
+      const newItem = (): QueuedEnvelope => ({
+        qid: newRandomId(),
+        ...(awaitsId && { awaitsId: true }),
+        ...(isOptOut && { isOptOut: true }),
+        envelope: { ...fields, events: [event] },
+      });
       const items = await read();
       const last = items.at(-1);
       const isOpen =
         last !== undefined &&
+        !isOptOut &&
+        last.isOptOut !== true &&
         last.body === undefined &&
+        (last.awaitsId === true) === awaitsId &&
         sameFields(last.envelope, fields) &&
         last.envelope.events.length < MAX_ENVELOPE_EVENTS &&
         fits(last.envelope, event);
       if (isOpen) {
         last.envelope.events.push(event);
       } else {
-        items.push({ qid: newRandomId(), envelope: { ...fields, events: [event] } });
+        items.push(newItem());
       }
-      await write(items);
-      return items.at(-1)?.envelope.events.length === MAX_ENVELOPE_EVENTS;
+      const { kept, dropped } = withinCaps(items);
+      await write(kept);
+      return { isFull: kept.at(-1)?.envelope.events.length === MAX_ENVELOPE_EVENTS, dropped };
     },
 
     lease: async (terms) => {
@@ -137,25 +215,31 @@ export function newQueue({
       return free;
     },
 
-    seal: async (qid, terms) => {
+    seal: async (qid, terms, identity) => {
       const items = await read();
       const item = items.find((candidate) => candidate.qid === qid);
-      if (item === undefined || !isFree(item, terms)) {
+      if (item === undefined || !isFree(item, terms) || (item.awaitsId === true && identity === undefined)) {
         return undefined;
       }
-      const body = bodyOf(item);
-      // The check drops an envelope whose stored body differs from its events. The checks before a send read the
-      // envelope, so only a matching body has passed them.
-      if (item.body !== undefined && item.body !== body) {
-        reportError(new Error('artel: a queued envelope whose body differs from its events was dropped'));
-        await write(items.filter((candidate) => candidate !== item));
-        return undefined;
+      if (item.awaitsId === true && identity !== undefined) {
+        // The browser, the session and the id go after the other fields and the events. The body stored at this seal
+        // keeps that order on every attempt.
+        const { session, ...fields } = item.envelope;
+        item.envelope = {
+          ...fields,
+          ...(identity.browser !== undefined && { browser: identity.browser }),
+          session,
+          id: identity.id,
+        };
+        delete item.awaitsId;
       }
+      const isRepeat = item.body !== undefined;
+      const body = item.body ?? bodyOf(item);
       item.body = body;
       item.leasedBy = terms.holder;
       item.leasedUntil = terms.until;
       await write(items);
-      return { envelope: item.envelope, body };
+      return { envelope: item.envelope, body, isRepeat };
     },
 
     remove: (qid) => update((items) => items.filter((item) => item.qid !== qid)),
@@ -171,14 +255,27 @@ export function newQueue({
         }),
       ),
 
-    removeId: (id) => update((items) => items.filter((item) => item.envelope.id !== id)),
+    removeId: (id) => removeWhere((item) => item.envelope.id === id),
 
-    clear: () => storage.set(QUEUE_KEY, '[]'),
+    removeIdentified: async () =>
+      unsent(await removeWhere((item) => item.envelope.id !== undefined || item.awaitsId === true)),
+
+    removeAllButOptOuts: async () => unsent(await removeWhere((item) => item.isOptOut !== true)),
   };
 }
 
-function isFree(item: QueuedEnvelope, { holder, now }: LeaseTerms): boolean {
-  return item.leasedUntil === undefined || item.leasedBy === holder || item.leasedUntil <= now;
+/** Returns the envelopes no seal stored a body for, which no request carried to the intake. */
+function unsent(items: readonly QueuedEnvelope[]): QueuedEnvelope[] {
+  return items.filter((item) => item.body === undefined);
+}
+
+/**
+ * Tells whether `holder` may lease or seal the envelope. A lease that ends later than a new one would counts as ended:
+ * the clock was set back, and the lease would otherwise hold the envelope for as long.
+ */
+function isFree(item: QueuedEnvelope, { holder, now, until }: LeaseTerms): boolean {
+  const { leasedUntil } = item;
+  return leasedUntil === undefined || item.leasedBy === holder || leasedUntil <= now || leasedUntil > until;
 }
 
 function sameFields(envelope: Envelope, fields: Omit<Envelope, 'events'>): boolean {
@@ -186,7 +283,6 @@ function sameFields(envelope: Envelope, fields: Omit<Envelope, 'events'>): boole
   return JSON.stringify(envelopeFields) === JSON.stringify(fields);
 }
 
-/** Returns the request body of an envelope. Each call gives the same bytes, since a sealed envelope does not change. */
 function bodyOf({ qid, envelope }: QueuedEnvelope): string {
   return JSON.stringify({ ...envelope, batch: qid });
 }

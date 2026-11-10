@@ -1,3 +1,4 @@
+import type { Browser } from './browser.js';
 import type { Period } from './calendar.js';
 
 /** The platform the product runs on, as the intake names it. */
@@ -10,16 +11,37 @@ export const Platform = {
 } as const;
 export type Platform = (typeof Platform)[keyof typeof Platform];
 
-/** The events the collector sends itself, from its lifecycle methods and its switch. */
+/**
+ * The events that only the collector sends: `installed` and `updated` from its own methods, and `opted_out` when the
+ * user turns analytics off.
+ */
 export const LifecycleEvent = {
   Installed: 'installed',
   Updated: 'updated',
-  UsageCountsOn: 'usage_counts_on',
-  UsageCountsOff: 'usage_counts_off',
+  OptedOut: 'opted_out',
 } as const;
 export type LifecycleEvent = (typeof LifecycleEvent)[keyof typeof LifecycleEvent];
 
-/** Event parameters. The intake keeps only those on the product's allowlist. */
+/** The system event of a page view. Only the first one that a collector records carries the referrer. */
+export const PAGE_VIEW = 'page_view';
+export const UNINSTALLED = 'uninstalled';
+
+/**
+ * The intake's `system_events`: the events it takes from every product without the product's allowlist. The collector
+ * sends the lifecycle ones, and the product's own pages and site send the rest.
+ */
+export const SYSTEM_EVENTS: readonly string[] = [
+  ...Object.values(LifecycleEvent),
+  UNINSTALLED,
+  'welcome_opened',
+  PAGE_VIEW,
+  'install_click',
+];
+
+/**
+ * Event parameters. The intake drops the whole event when a parameter is off the product's allowlist, when an enum
+ * value is off its list, or when a string looks like an address, a domain or an IP.
+ */
 export type EventParams = Record<string, string | number | boolean>;
 
 /** One event as the intake receives it, inside an envelope. */
@@ -29,9 +51,9 @@ export interface UsageEvent {
   day: string;
   /** The periods, such as the day, in which this event is the user's first one. */
   first?: Period[];
-  /** Days since install. Only the first event of a day carries it. */
+  /** Days since install, as a bucket without an `id`. Only the first event of a day carries it. */
   age_days?: number;
-  /** Months since install. Only the first event of a month carries it. */
+  /** Months since install, as a bucket without an `id`. Only the first event of a month carries it. */
   age_months?: number;
   params?: EventParams;
   page?: string;
@@ -43,7 +65,15 @@ export interface Envelope {
   key: string;
   platform: Platform;
   version: string;
-  lang?: string;
+  /** The user's language, such as `pt-BR`; only `pt` without an `id`. */
+  browser_language?: string;
+  /**
+   * The language the product shows its interface in. An envelope without an `id` carries only the primary language,
+   * such as `pt`.
+   */
+  ui_language?: string;
+  /** Present only on a web or extension envelope that carries an `id`. */
+  browser?: Browser;
   session: string;
   id?: string;
   /** Stays the same on each retry of this envelope. The intake keeps it once. */

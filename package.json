@@ -1,6 +1,6 @@
 {
   "name": "@kk-forge/artel-collector",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Sends a product's usage events to the intake service",
   "license": "MIT",
   "author": "KK Forge",

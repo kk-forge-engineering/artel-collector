@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Collector } from './exports.js';
+import { AnalyticsState, type Collector } from './exports.js';
 import { eventNamesIn } from '../tests/fakeFetch.js';
 import { newSharedLock } from '../tests/sharedLock.js';
 import {
@@ -11,6 +11,7 @@ import {
   attemptStartMs,
   newHarness,
   type Harness,
+  USER_ID,
 } from '../tests/harness.js';
 
 /**
@@ -47,16 +48,19 @@ describe('delivery guarantees', () => {
   it('keeps one retry pending when a flush queued behind a failing send fails too', async () => {
     const { harness, sent } = await flushBehindFailingSend(async () => 503);
 
-    // Two failures in a row make the collector wait 2 s before it tries again. The check at 1.5 s shows that no 1 s
-    // timer from the first failure fires.
+    // The queued flush keeps the 1 s wait of the first failure. Its failure makes the collector wait 2 s more. The
+    // check at 1.5 s after it shows that no second 1 s timer fires.
+    await harness.clock.advance(RETRY_DELAY_MS);
+    expect(sent).toHaveLength(2);
     await harness.clock.advance(RETRY_DELAY_MS + RETRY_DELAY_MS / 2);
     expect(sent).toHaveLength(2);
-    await harness.clock.advance(RETRY_DELAY_MS);
+    await harness.clock.advance(RETRY_DELAY_MS / 2);
     expect(sent).toHaveLength(3);
   });
 
   it('sends a full envelope at once after a queued flush succeeded past a failed send', async () => {
     const { harness, sent } = await flushBehindFailingSend(async () => 204);
+    await harness.clock.advance(RETRY_DELAY_MS);
 
     for (let index = 0; index < 100; index++) {
       await harness.collector.track('b');
@@ -74,7 +78,7 @@ describe('delivery guarantees', () => {
       return 204;
     });
 
-    await harness.clock.advance(SEND_DELAY_MS);
+    await harness.clock.advance(RETRY_DELAY_MS + SEND_DELAY_MS);
 
     expect(sent).toEqual([['a'], ['a'], ['c']]);
   });
@@ -110,17 +114,6 @@ describe('delivery guarantees', () => {
     expect(sent).toEqual(['a', 'b', 'c']);
   });
 
-  it('drops and reports an event too large for any envelope, and sends the others', async () => {
-    const harness = newHarness();
-
-    await harness.collector.track('huge', { text: 'x'.repeat(70_000) });
-    await harness.collector.track('a');
-    await harness.settle();
-
-    expect(harness.fetch.eventNames).toEqual(['a']);
-    expect(harness.errors).toHaveLength(1);
-  });
-
   it('keeps an envelope in storage while its request is on its way, so a host stopped mid-send loses nothing', async () => {
     const harness = newHarness({ transport: () => new Promise<number>(() => undefined) });
     await harness.collector.track('a');
@@ -137,15 +130,17 @@ describe('delivery guarantees', () => {
     expect(harness.fetch.eventNames).toEqual(['a']);
   });
 
-  it('keeps the envelope when getId fails during the send', async () => {
+  it('keeps an envelope that waits for the id when getId fails during the send, and sends it once getId answers', async () => {
     let calls = 0;
     const harness = newHarness({
       getId: () => {
         calls++;
         if (calls === 2) {
-          throw new Error('consent store unavailable');
+          throw new Error('sign-in store unavailable');
         }
-        return undefined;
+        // The collector calls getId when it records the event and at each send. No id exists yet at the record. The
+        // second call is the failed send. The third call, at the next send, finds the id.
+        return calls === 1 ? undefined : USER_ID;
       },
     });
     await harness.collector.track('a');
@@ -173,6 +168,29 @@ describe('delivery guarantees', () => {
     await harness.settle();
 
     expect(harness.fetch.eventNames).toEqual(['a']);
+  });
+
+  it('counts a transport unsettled after 35 seconds as status 0, so flush, forget and an opt-out resolve', async () => {
+    let calls = 0;
+    const harness = newHarness({
+      getId: () => USER_ID,
+      transport: (body) => {
+        calls++;
+        return calls === 1 ? new Promise<number>(() => undefined) : harness.transport(body);
+      },
+    });
+    await harness.collector.track('a');
+    const settled: string[] = [];
+    void harness.collector.flush().then(() => settled.push('flush'));
+    void harness.collector.forget(USER_ID).then(() => settled.push('forget'));
+    void harness.collector.setState(AnalyticsState.OptedOut).then(() => settled.push('setState'));
+
+    await harness.clock.advance(35_000 - 1);
+    expect(settled).toEqual([]);
+    await harness.clock.advance(1 + RETRY_DELAY_MS);
+
+    expect(settled).toEqual(['flush', 'forget', 'setState']);
+    expect(harness.fetch.eventNames).toEqual(['opted_out']);
   });
 
   it('holds new events until the pending retry, instead of sending past it', async () => {
@@ -208,7 +226,7 @@ describe('delivery guarantees', () => {
     const lock = newSharedLock();
     const harness = newHarness({ lock });
     const other = harness.restart();
-    await Promise.all([harness.collector.isEnabled(), other.isEnabled()]);
+    await Promise.all([harness.collector.getState(), other.getState()]);
 
     await Promise.all([harness.collector.track('a'), other.track('b')]);
     await harness.settle();
@@ -216,18 +234,6 @@ describe('delivery guarantees', () => {
     expect(harness.fetch.eventNames).toHaveLength(2);
     expect(harness.fetch.eventNames).toEqual(expect.arrayContaining(['a', 'b']));
     expect(harness.fetch.events.filter((event) => event.first?.includes('day'))).toHaveLength(1);
-  });
-
-  it('cuts the page path and the referrer to the lengths the intake keeps', async () => {
-    const harness = newHarness({
-      getPage: () => ({ page: `/${'p'.repeat(300)}`, referrer: `${'r'.repeat(200)}.com` }),
-    });
-
-    await harness.collector.track('page_view');
-    await harness.settle();
-
-    expect(harness.fetch.events[0]?.page).toHaveLength(256);
-    expect(harness.fetch.events[0]?.referrer).toHaveLength(128);
   });
 });
 
@@ -250,11 +256,9 @@ describe('batch key', () => {
     expect(bodies[1]).toBe(bodies[0]);
   });
 
-  it('drops a sealed envelope whole, not in part, once it may no longer go', async () => {
-    let id: string | undefined = 'c0ffee12';
+  it('drops a sealed envelope whole, not in part, once it went stale', async () => {
     const bodies: string[] = [];
     const harness = newHarness({
-      getId: () => id,
       transport: async (body) => {
         bodies.push(body);
         return 503;
@@ -263,7 +267,7 @@ describe('batch key', () => {
     await harness.collector.track('a');
     await harness.settle();
 
-    id = undefined;
+    harness.clock.jumpMinutes(3 * 24 * 60);
     await harness.collector.flush();
 
     expect(bodies).toHaveLength(2);
@@ -332,6 +336,7 @@ describe('batch key', () => {
     await harness.clock.advance(SEND_DELAY_MS);
     await harness.collector.track('b');
     await harness.collector.flush();
+    await harness.clock.advance(RETRY_DELAY_MS);
 
     expect(harness.fetch.eventNamesByRequest).toEqual([['a'], ['a'], ['b']]);
   });
@@ -375,5 +380,33 @@ describe('batch key', () => {
     await harness.clock.advance(2 * RETRY_DELAY_MS + 4 * RETRY_DELAY_MS);
 
     expect(harness.fetch.eventNamesByRequest).toEqual([['a'], ['a'], ['a'], ['a'], ['b', 'c']]);
+  });
+});
+
+describe('envelopes that name the user', () => {
+  it('lets another context send an envelope this one leased while it waited for the id', async () => {
+    const lock = newSharedLock();
+    const harness = newHarness({ getId: () => undefined, lock });
+    await harness.collector.track('waiting');
+    await harness.settle();
+    expect(harness.fetch.requests).toEqual([]);
+
+    await harness.restart({ getId: () => USER_ID, lock }).flush();
+
+    expect(harness.fetch.eventNames).toEqual(['waiting']);
+  });
+
+  it('sends again the body it sealed with the id, even while getId no longer knows the id', async () => {
+    let id: string | undefined;
+    const harness = newHarness({ getId: () => id });
+    harness.fetch.respondNextWith(503);
+    await harness.collector.track('waiting');
+    id = USER_ID;
+    await harness.clock.advance(SEND_DELAY_MS);
+    id = undefined;
+
+    await harness.clock.advance(RETRY_DELAY_MS);
+
+    expect(harness.fetch.requests.map((request) => request.envelope.id)).toEqual([USER_ID, USER_ID]);
   });
 });

@@ -1,17 +1,24 @@
 import { systemClock, type Clock } from './clock.js';
 
+/** What the intake answered: its HTTP status, 0 when the request did not reach it, and its `Retry-After` header. */
+export interface TransportResult {
+  status: number;
+  retryAfter?: string;
+}
+
 /**
- * Sends one envelope and resolves to the intake's HTTP status, or 0 on failure. It must resolve within 30 seconds. Past
- * a minute, the intake keeps a forgotten user's events, and the envelope's lease ends, so another context may resend
- * it.
+ * Sends one envelope and resolves to the intake's answer or its HTTP status. It must resolve within 30 seconds. After
+ * 35 seconds the outbox counts it as status 0 and sends the envelope again. The intake keeps a forgotten user's events
+ * from a request that arrives over a minute after the forget.
  */
-export type Transport = (body: string) => Promise<number>;
+export type Transport = (body: string) => Promise<number | TransportResult>;
 
 const TIMEOUT_MS = 30_000;
 
 /**
  * Returns a transport that posts each envelope to `endpoint` with `fetch`, the host's own by default. The transport
- * resolves to 0 when a request takes over 30 seconds.
+ * resolves to the status and the raw `Retry-After` header, or to status 0 when a request fails or takes over 30
+ * seconds.
  */
 export function newHttpTransport(
   endpoint: string,
@@ -38,9 +45,10 @@ export function newHttpTransport(
         keepalive: true,
         signal: timeout.signal,
       });
-      return response.status;
+      const retryAfter = response.headers.get('Retry-After');
+      return { status: response.status, ...(retryAfter !== null && { retryAfter }) };
     } catch {
-      return 0;
+      return { status: 0 };
     } finally {
       clock.clearTimeout(timer);
     }

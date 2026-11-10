@@ -1,34 +1,115 @@
+import { detectBrowser } from './browser.js';
 import { systemClock, type Clock } from './clock.js';
-import type { Collector } from './collector.js';
-import { LifecycleEvent, type EventParams } from './envelope.js';
+import { newCollector } from './collector.js';
+import { Mode, type Collector, type CommonOptions, type Delivery, type ModeOptions } from './collectorTypes.js';
+import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
+import { eventProblem } from './eventCheck.js';
+import { reportTo } from './hostInput.js';
 import type { StorageAdapter } from './storage.js';
+import { newWebLock } from './web.js';
 
+/** The message in each of the extension's `_locales` that holds that locale's code, such as `pt-BR`. */
+const UI_LANGUAGE_MESSAGE = 'ui_language';
 const FORWARD_TYPE = 'artel.track';
-// The intake refuses an event past these limits. The worker refuses such a forwarded event, so the queue never holds an
-// event the intake rejects.
-const MAX_NAME_LENGTH = 40;
-const MAX_PARAMS = 16;
-const MAX_PARAM_STRING_LENGTH = 64;
+/**
+ * The event names the worker refuses from a content script: every system event, which the intake counts from any page
+ * without the product's allowlist.
+ */
+const REFUSED_NAMES: ReadonlySet<string> = new Set(SYSTEM_EVENTS);
 /**
  * The forwarded events the worker tracks in a minute from every tab and frame together. A page can open any number of
- * frames that run the content script, so only a budget in the worker bounds how fast a page can fill the queue and push
+ * frames that run the content script, so only a limit in the worker bounds how fast a page can fill the queue and push
  * out what waits in it.
  */
 const FORWARDS_PER_MINUTE = 60;
-/** The bytes of forwarded names and params the worker tracks in a minute, about one envelope. */
-const FORWARD_BYTES_PER_MINUTE = 60_000;
 const MINUTE_MS = 60_000;
-/**
- * The `chrome.storage.session` key the worker keeps the budget under, so the budget outlasts a restart of the service
- * worker, which a page can bring about by going quiet.
- */
-const BUDGET_KEY = 'artel.forwardBudget';
 
-/** The minute the budget counts from, and what the worker tracked in it. */
-interface ForwardBudget {
-  minuteStart: number;
-  tracked: number;
-  bytes: number;
+/**
+ * The options of `newExtensionCollector`: those of `newCollector` without `platform`, with `storage` and `version`
+ * optional. An option left out or `undefined` takes its default.
+ */
+export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version'> & {
+  /** The storage, `chrome.storage.local` by default. */
+  storage?: StorageAdapter | undefined;
+  /** The product version, the manifest's by default. */
+  version?: string | undefined;
+  /** An extension sends no page. */
+  getPage?: never;
+} & Delivery &
+  ModeOptions;
+
+/**
+ * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
+ * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The product
+ * builds it at the worker's top level, so the call runs at each worker start.
+ */
+export function newExtensionCollector(
+  options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
+): Collector<'identified'>;
+export function newExtensionCollector(
+  options: ExtensionCollectorOptions & { mode: typeof Mode.Anonymous },
+): Collector<'anonymous'>;
+export function newExtensionCollector(options: ExtensionCollectorOptions): Collector;
+export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
+  const closed = isServiceWorker() ? closeToContentScripts(options.onError) : Promise.resolve();
+  const defaults = {
+    platform: Platform.Extension,
+    // The function reads each default only when the caller leaves the option out. A test's fake browser may lack the
+    // manifest and `chrome.i18n`.
+    version: options.version ?? chromeApi().runtime.getManifest().version,
+    storage: after(closed, options.storage ?? newChromeStorageAdapter()),
+    lock: options.lock ?? newWebLock(),
+    browserLanguage: options.browserLanguage ?? navigator.language,
+    uiLanguage: options.uiLanguage ?? localeOfExtension(),
+  };
+  return options.mode === Mode.Identified
+    ? newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) })
+    : newCollector({ ...options, ...defaults });
+}
+
+/** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */
+function isServiceWorker(): boolean {
+  const scope: unknown = Reflect.get(globalThis, 'ServiceWorkerGlobalScope');
+  return typeof scope === 'function' && globalThis instanceof scope;
+}
+
+/**
+ * Lets only the extension's own pages and worker read and write `chrome.storage.local`, and resolves once Chrome has
+ * answered. It never rejects. A failure, such as a Chrome without the call, goes to `onError`.
+ */
+async function closeToContentScripts(onError: ((error: Error) => void) | undefined): Promise<void> {
+  try {
+    const local = chromeApi().storage.local;
+    if (typeof local.setAccessLevel !== 'function') {
+      throw new TypeError('artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it');
+    }
+    await local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  } catch (error) {
+    reportTo(onError, error);
+  }
+}
+
+/** Returns `storage` whose every read and write waits for `ready` first. */
+function after(ready: Promise<void>, storage: StorageAdapter): StorageAdapter {
+  return {
+    get: async (key) => {
+      await ready;
+      return storage.get(key);
+    },
+    set: async (key, value) => {
+      await ready;
+      await storage.set(key, value);
+    },
+  };
+}
+
+/**
+ * Returns the locale Chrome picked from the extension's `_locales`, which each locale names in its `ui_language`
+ * message, or undefined when the extension has no such message. Chrome gives no other way to read that choice.
+ */
+function localeOfExtension(): string | undefined {
+  const locale = chromeApi().i18n?.getMessage(UI_LANGUAGE_MESSAGE);
+  return locale === undefined || locale === '' ? undefined : locale;
 }
 
 /**
@@ -60,52 +141,27 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
 }
 
 /**
- * Tracks the events content scripts forward with `forwardTrack`, at most 60 or 60 kB a minute. It takes them only from
- * this extension, and never the collector's own lifecycle events, which a content script has no reason to send. Returns
- * the function that stops it.
+ * Tracks the events content scripts forward with `forwardTrack`, at most 60 a minute. It takes them only from this
+ * extension, and only the product's own events: never a system event of the intake, such as `installed` or
+ * `uninstalled`, which a content script has no reason to send. Returns the function that stops it.
  */
 export function acceptForwarded(collector: Collector, { clock = systemClock }: { clock?: Clock } = {}): () => void {
-  let budget: ForwardBudget | undefined;
-  /** The chain the messages take their turn on, one by one, so each reads the budget the one before it left. */
-  let turn: Promise<void> = Promise.resolve();
-  /**
-   * The number of messages waiting their turn. Two minutes' budget is the most the waiting ones could use: what is left
-   * of the minute they arrived in, and the next minute once it starts.
-   */
-  let waiting = 0;
-
-  async function spend(now: number, bytes: number): Promise<boolean> {
-    budget ??= await readBudget();
-    if (!isWithinMinute(budget, now)) {
-      budget = { minuteStart: now, tracked: 0, bytes: 0 };
-    }
-    if (budget.tracked >= FORWARDS_PER_MINUTE || budget.bytes + bytes > FORWARD_BYTES_PER_MINUTE) {
-      return false;
-    }
-    budget = { minuteStart: budget.minuteStart, tracked: budget.tracked + 1, bytes: budget.bytes + bytes };
-    await writeBudget(budget);
-    return true;
-  }
-
+  let minuteStart = Number.NEGATIVE_INFINITY;
+  let tracked = 0;
   const onMessage: MessageListener = (message, sender) => {
     if (sender.id !== chromeApi().runtime.id || !isForwarded(message)) {
       return undefined;
     }
     const now = clock.now();
-    // A message that finds this minute's count spent, or the queue full, is dropped at once rather than queued.
-    if ((budget !== undefined && isSpent(budget, now)) || waiting >= 2 * FORWARDS_PER_MINUTE) {
-      return undefined;
+    // A clock set back by a minute or more starts a new window too, so forwarding never stops until it catches up.
+    if (Math.abs(now - minuteStart) >= MINUTE_MS) {
+      minuteStart = now;
+      tracked = 0;
     }
-    waiting++;
-    // The turn keeps only the checked fields, not whatever else the message carries.
-    const { name, params } = message;
-    const bytes = new TextEncoder().encode(JSON.stringify({ name, params })).length;
-    turn = turn
-      .then(() => spend(now, bytes))
-      .then((isWithinBudget) => (isWithinBudget ? collector.track(name, params) : undefined))
-      .finally(() => {
-        waiting--;
-      });
+    if (tracked < FORWARDS_PER_MINUTE) {
+      tracked++;
+      void collector.track(message.name, message.params);
+    }
     return undefined;
   };
   chromeApi().runtime.onMessage.addListener(onMessage);
@@ -113,83 +169,45 @@ export function acceptForwarded(collector: Collector, { clock = systemClock }: {
 }
 
 /**
- * Sets the uninstall page with `uninstallParams()` in its query. Chrome keeps the address as it was set, so the service
- * worker calls this on each start to keep the age and the active days current.
+ * Sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone
+ * when `uninstallParams()` resolves to undefined. Chrome keeps the address as it was set, so the service worker calls
+ * this on each start and after each change of state. It resolves and never rejects. A failure of `uninstallParams()`
+ * goes to the collector's `onError`, and any other failure to its own `onError`.
  */
-export async function refreshUninstallUrl(collector: Collector, pageUrl: string): Promise<void> {
-  const url = new URL(pageUrl);
-  for (const [name, value] of Object.entries(await collector.uninstallParams())) {
-    url.searchParams.set(name, String(value));
-  }
-  await chromeApi().runtime.setUninstallURL(url.toString());
-}
-
-/** A wall clock set back starts a new minute too, or the budget would stay spent until the clock caught up. */
-function isWithinMinute(budget: ForwardBudget, now: number): boolean {
-  return now >= budget.minuteStart && now - budget.minuteStart < MINUTE_MS;
-}
-
-function isSpent(budget: ForwardBudget, now: number): boolean {
-  return isWithinMinute(budget, now) && budget.tracked >= FORWARDS_PER_MINUTE;
-}
-
-/** Reads the budget a worker before this one left. Without `chrome.storage.session` the budget starts empty. */
-async function readBudget(): Promise<ForwardBudget> {
+export async function refreshUninstallUrl(
+  collector: Collector,
+  pageUrl: string,
+  { onError }: { onError?: (error: Error) => void } = {},
+): Promise<void> {
   try {
-    const stored: unknown = (await chromeApi().storage.session.get(BUDGET_KEY))[BUDGET_KEY];
-    if (isForwardBudget(stored)) {
-      return stored;
+    const url = new URL(pageUrl);
+    const params = await collector.uninstallParams();
+    for (const [name, value] of Object.entries(params ?? {})) {
+      url.searchParams.set(name, String(value));
     }
-  } catch {
-    // The budget then lives only as long as this worker.
+    await chromeApi().runtime.setUninstallURL(url.toString());
+  } catch (error) {
+    reportTo(onError, error);
   }
-  return { minuteStart: 0, tracked: 0, bytes: 0 };
-}
-
-async function writeBudget(budget: ForwardBudget): Promise<void> {
-  try {
-    await chromeApi().storage.session.set({ [BUDGET_KEY]: budget });
-  } catch {
-    // The budget then lives only as long as this worker.
-  }
-}
-
-/** Checks a stored budget, including that its counts stay within the limits, so a tampered one cannot widen them. */
-function isForwardBudget(value: unknown): value is ForwardBudget {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const [minuteStart, tracked, bytes]: unknown[] = ['minuteStart', 'tracked', 'bytes'].map((key) =>
-    Reflect.get(value, key),
-  );
-  return (
-    Number.isFinite(minuteStart) &&
-    typeof tracked === 'number' &&
-    Number.isInteger(tracked) &&
-    tracked >= 0 &&
-    tracked <= FORWARDS_PER_MINUTE &&
-    typeof bytes === 'number' &&
-    Number.isInteger(bytes) &&
-    bytes >= 0 &&
-    bytes <= FORWARD_BYTES_PER_MINUTE
-  );
 }
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
 
-interface StorageArea {
-  get(key: string): Promise<Record<string, unknown>>;
-  set(items: Record<string, unknown>): Promise<void>;
-}
-
 /** The slice of the `chrome` API these helpers call. The package carries no Chrome typings. */
 interface ChromeApi {
   storage: {
-    local: StorageArea;
-    session: StorageArea;
+    local: {
+      get(key: string): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
+      /** Chrome 102 and later have `setAccessLevel`. */
+      setAccessLevel?: (options: { accessLevel: string }) => Promise<void>;
+    };
   };
+  /** Missing in a test's fake browser; a real extension context has it. */
+  i18n?: { getMessage(name: string): string };
   runtime: {
     id: string;
+    getManifest(): { version: string };
     sendMessage(message: unknown): Promise<unknown>;
     setUninstallURL(url: string): Promise<void>;
     onMessage: {
@@ -214,41 +232,17 @@ function isChromeApi(value: unknown): value is ChromeApi {
 }
 
 /**
- * Checks the shape of a forwarded message and its sizes against the intake's limits, and refuses lifecycle event names.
- * Content scripts run among the page's scripts, so the worker cannot trust what they send.
+ * Checks a forwarded message against what the intake takes, as `track` does, and refuses the names in
+ * `REFUSED_NAMES`. Content scripts run among the page's scripts, so the worker cannot trust what they send.
  */
 function isForwarded(message: unknown): message is { name: string; params?: EventParams } {
   if (typeof message !== 'object' || message === null || Reflect.get(message, 'type') !== FORWARD_TYPE) {
     return false;
   }
   const name: unknown = Reflect.get(message, 'name');
-  const params: unknown = Reflect.get(message, 'params');
-  const lifecycleEvents: readonly unknown[] = Object.values(LifecycleEvent);
   return (
     typeof name === 'string' &&
-    characters(name) <= MAX_NAME_LENGTH &&
-    !lifecycleEvents.includes(name) &&
-    (params === undefined || isEventParams(params))
+    !REFUSED_NAMES.has(name) &&
+    eventProblem(name, Reflect.get(message, 'params')) === undefined
   );
-}
-
-function isEventParams(value: unknown): value is EventParams {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.keys(value).length <= MAX_PARAMS &&
-    Object.keys(value).every((key) => characters(key) <= MAX_NAME_LENGTH) &&
-    Object.values(value).every(
-      (item) =>
-        (typeof item === 'string' && characters(item) <= MAX_PARAM_STRING_LENGTH) ||
-        typeof item === 'number' ||
-        typeof item === 'boolean',
-    )
-  );
-}
-
-/** Counts characters as the intake does, so a character outside the basic plane counts once. */
-function characters(text: string): number {
-  return Array.from(text).length;
 }

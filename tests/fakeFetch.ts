@@ -7,12 +7,17 @@ export interface RecordedRequest {
   envelope: Envelope;
 }
 
-/** The envelope as the intake service reads it. Fields stay loose so a test sees exactly what was sent. */
+/**
+ * The envelope as the intake service reads it. This type is looser than the collector's own type, so a test sees
+ * exactly what the collector sent.
+ */
 export interface Envelope {
   key: string;
   platform: string;
+  browser?: { name: string; major?: number };
   version: string;
-  lang?: string;
+  browser_language?: string;
+  ui_language?: string;
   session: string;
   id?: string;
   batch?: string;
@@ -30,15 +35,15 @@ export interface SentEvent {
   referrer?: string;
 }
 
-/** A network edge that records every request and answers 204 unless a test queued another outcome. */
+/** A fake `fetch` that records every request. It answers 204 unless a test queued another outcome. */
 export class FakeFetch {
   readonly requests: RecordedRequest[] = [];
-  private readonly outcomes: Array<number | Error> = [];
+  private readonly outcomes: Array<{ status: number; headers?: Record<string, string> } | Error> = [];
 
-  /** Queues `times` answers with `status` for the next requests. */
-  respondNextWith(status: number, times = 1): void {
+  /** Queues `times` answers with `status`, and `headers` when given, for the next requests. */
+  respondNextWith(status: number, times = 1, headers?: Record<string, string>): void {
     for (let index = 0; index < times; index++) {
-      this.outcomes.push(status);
+      this.outcomes.push({ status, ...(headers !== undefined && { headers }) });
     }
   }
 
@@ -67,11 +72,11 @@ export class FakeFetch {
       keepalive: init?.keepalive,
       envelope: parseEnvelope(init?.body),
     });
-    const outcome = this.outcomes.shift() ?? 204;
+    const outcome = this.outcomes.shift() ?? { status: 204 };
     if (outcome instanceof Error) {
       throw outcome;
     }
-    return new Response(undefined, { status: outcome });
+    return new Response(undefined, outcome);
   };
 }
 
