@@ -53,7 +53,7 @@ export interface CommonOptions {
   version: string;
   /** The user's language, such as `pt-BR`: what the browser asks sites for. */
   browserLanguage?: string | undefined;
-  /** The language the product shows its interface in: the outcome of its own localization. */
+  /** The language the user picked in the product, when the product offers that choice. Left out otherwise. */
   uiLanguage?: string | undefined;
   storage: StorageAdapter;
   /** Minutes without events that end a session, 10 by default. */

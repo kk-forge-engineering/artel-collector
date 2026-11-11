@@ -32,9 +32,9 @@ A product with its own analytics switch calls `setState('opted_out')` once for e
 ### Languages
 
 - `browserLanguage` is the user's language: the one the browser asks sites for, `navigator.language` by default on the web and in an extension.
-- `uiLanguage` is the language the product shows its interface in, the outcome of its own localization. An extension sends by default the locale Chrome picked from its `_locales`. Each `_locales/<locale>/messages.json` holds a `ui_language` message whose value is that locale's code, such as `pt-BR`. The collector reads it with `chrome.i18n.getMessage('ui_language')`, reading `_` as `-`. The publication kit of the intake's admin writes that message. Without that message an extension sends none. A website or a desktop app passes it, or sends none.
+- `uiLanguage` is the language the user picked in the product, when the product offers that choice. Only the product's option sets it, on every platform. A product without that choice passes none, and its envelopes carry no `ui_language`.
 
-The two differ when the product has no translation into the user's language, so the intake can count the users a translation would serve. In the `anonymous` state both are cut to the primary language: `pt-BR` goes as `pt`, `zh-Hant-TW` as `zh`.
+In the `anonymous` state both are cut to the primary language: `pt-BR` goes as `pt`, `zh-Hant-TW` as `zh`.
 
 ## Usage
 
@@ -43,7 +43,7 @@ Each `const usage` line makes a collector. `key`, `version` and `endpoint` are v
 ```ts
 // a website or a web app
 const usage = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
-const usage = newWebCollector({ key, version, endpoint, mode: 'identified', getId, uiLanguage: i18n.language });
+const usage = newWebCollector({ key, version, endpoint, mode: 'identified', getId, uiLanguage: settings.language });
 // a site whose paths carry a secret or a person sends the route pattern instead
 const usage = newWebCollector({
   key,
@@ -56,20 +56,12 @@ const usage = newWebCollector({
 // a Chrome extension, in the service worker and in each page
 const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous' });
 const usage = newExtensionCollector({ key, endpoint, mode: 'identified', getId });
+// a content script of that extension, which hands its events to the service worker
+const usage = newContentScriptCollector();
 
-// a desktop app, here a Tauri window over the web module's storage and lock
-const desktop = {
-  key,
-  platform: 'macos',
-  version,
-  endpoint,
-  browserLanguage: navigator.language,
-  uiLanguage: i18n.language,
-  storage: newLocalStorageAdapter(),
-  lock: newWebLock(),
-} as const;
-const usage = newCollector({ ...desktop, mode: 'anonymous' });
-const usage = newCollector({ ...desktop, mode: 'identified', getId });
+// a window of a desktop app, such as a Tauri webview, where `platform` is 'macos', 'windows' or 'linux'
+const usage = newDesktopCollector({ key, version, endpoint, platform, mode: 'anonymous' });
+const usage = newDesktopCollector({ key, version, endpoint, platform, mode: 'identified', getId });
 ```
 
 Then track what the user does, and store their choice when they make it, here in an identified channel:
@@ -80,20 +72,20 @@ void usage.setState(consented ? 'identified' : 'anonymous');
 void usage.setState('opted_out'); // the user turned usage statistics off
 ```
 
-`newWebCollector` comes from `@kk-forge/artel-collector/web`, `newExtensionCollector` from `@kk-forge/artel-collector/extension`, and `newCollector` from the main module. Each platform constructor sets `platform`, fills in the defaults in the table below, and passes the result to `newCollector`. An option left out or `undefined` takes its default. Each constructor takes `mode` as the literal `'anonymous'` or `'identified'`, and returns a collector whose `setState` takes only that channel's states. A `mode` known only at run time goes in options typed `CollectorOptions`, `WebCollectorOptions` or `ExtensionCollectorOptions` and built per mode, and gives a collector whose `setState` takes every state.
+`newWebCollector` comes from `@kk-forge/artel-collector/web`, `newExtensionCollector` and `newContentScriptCollector` from `@kk-forge/artel-collector/extension`, `newDesktopCollector` from `@kk-forge/artel-collector/desktop`, and `newCollector` from the main module. Each platform constructor fills in the defaults in the table below and passes the result to `newCollector`. The web and extension constructors set `platform`, and the desktop one takes it. An option left out or `undefined` takes its default. Each constructor takes `mode` as the literal `'anonymous'` or `'identified'`, and returns a collector whose `setState` takes only that channel's states. A `mode` known only at run time goes in options typed `CollectorOptions`, `WebCollectorOptions`, `ExtensionCollectorOptions` or `DesktopCollectorOptions` and built per mode, and gives a collector whose `setState` takes every state. `newContentScriptCollector` takes no channel options, as "`@kk-forge/artel-collector/extension`" describes.
 
-Each constructor throws a `TypeError` that names the option when the options would make the intake refuse every envelope. A mistake in the build then fails its first run and its tests. That is a `key`, `platform` or `version` the intake does not take, an `endpoint` that is not `https`, or a `transport` that is not a function, as "Options" describes. It also throws for a `browser` on a desktop platform, which only untyped code passes and whose envelopes the intake refuses. The message never quotes the endpoint, so it carries no password. `newWebCollector` and `newExtensionCollector` also throw where `navigator` is missing, unless the options pass `browserLanguage`. Node 21.2 and later define `navigator.language`, so server rendering there builds a collector with the server's language. `newExtensionCollector` also throws outside an extension context unless the options pass both `version` and `uiLanguage`. A `browserLanguage` or `uiLanguage` that breaks the format throws nothing: the collector leaves it out and reports it to `onError`, since it often comes from the browser.
+Each constructor throws a `TypeError` that names the option when the options would make the intake refuse every envelope. A mistake in the build then fails its first run and its tests. That is a `key`, `platform` or `version` the intake does not take, an `endpoint` that is not `https`, or a `transport` that is not a function, as "Options" describes. It also throws for a `browser` on a desktop platform, which only untyped code passes and whose envelopes the intake refuses. The message never quotes the endpoint, so it carries no password. `newWebCollector`, `newExtensionCollector` and `newDesktopCollector` also throw where `navigator` is missing, unless the options pass `browserLanguage`. Node 21.2 and later define `navigator.language`, so server rendering there builds a collector with the server's language. `newExtensionCollector` also throws outside an extension context unless the options pass `version`. `newContentScriptCollector` never throws. A `browserLanguage` or `uiLanguage` that breaks the format throws nothing: the collector leaves it out and reports it to `onError`, since it often comes from the browser.
 
-| Option                     | `newWebCollector`                | `newExtensionCollector`                 |
-| -------------------------- | -------------------------------- | --------------------------------------- |
-| `platform`                 | `web`                            | `extension`                             |
-| `version`                  | required                         | the manifest's                          |
-| `storage`                  | `newLocalStorageAdapter()`       | `newChromeStorageAdapter()`             |
-| `lock`                     | `newWebLock()`                   | `newWebLock()`                          |
-| `browserLanguage`          | `navigator.language`             | `navigator.language`                    |
-| `uiLanguage`               | none                             | `chrome.i18n.getMessage('ui_language')` |
-| `getPage`                  | `pageFields`, see below          | not taken                               |
-| `browser`, identified only | `() => detectBrowser(navigator)` | `() => detectBrowser(navigator)`        |
+| Option                     | `newWebCollector`                | `newExtensionCollector`          | `newDesktopCollector`                 |
+| -------------------------- | -------------------------------- | -------------------------------- | ------------------------------------- |
+| `platform`                 | `web`                            | `extension`                      | required: `macos`, `windows`, `linux` |
+| `version`                  | required                         | the manifest's                   | required                              |
+| `storage`                  | `newLocalStorageAdapter()`       | `newChromeStorageAdapter()`      | `newLocalStorageAdapter()`            |
+| `lock`                     | `newWebLock()`                   | `newWebLock()`                   | `newWebLock()`                        |
+| `browserLanguage`          | `navigator.language`             | `navigator.language`             | `navigator.language`                  |
+| `uiLanguage`               | none                             | none                             | none                                  |
+| `getPage`                  | `pageFields`, see below          | not taken                        | not taken                             |
+| `browser`, identified only | `() => detectBrowser(navigator)` | `() => detectBrowser(navigator)` | not taken                             |
 
 ### Options
 
@@ -139,7 +131,7 @@ Each constructor throws a `TypeError` that names the option when the options wou
   - a language the collector leaves out, a state `setState` refuses, an id past 64 characters, an id `forget` refuses, a transport status that is no HTTP status, a page the collector leaves out, and a page field that is not a string;
   - a storage, lock, `getId`, `browser` or `getPage` error, and an extension worker's `setAccessLevel` that fails.
 
-  A request that goes again later, after a network failure, 429 or 5xx, does not reach it. Its envelope reaches it only when a drop rule removes it. These reach no `onError` of the collector: a forwarded event the extension worker refuses or drops, a `forwardTrack` that fails, and a failure of `refreshUninstallUrl` outside `uninstallParams()`, which goes to that function's own `onError`.
+  A request that goes again later, after a network failure, 429 or 5xx, does not reach it. Its envelope reaches it only when a drop rule removes it. These reach no `onError` of the collector: a forwarded event the extension worker refuses or drops, a `forwardTrack` or a content script's `track` that fails, and a failure of `refreshUninstallUrl` outside `uninstallParams()`, which goes to that function's own `onError`.
 
 ### Methods
 
@@ -172,7 +164,7 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
 `detectBrowser(nav)` names the browser from the `userAgentData.brands` and `userAgent` of the `navigator` it is given. It returns `{ name, major }`, where `name` is `chrome`, `edge`, `opera`, `yandex`, `brave`, `firefox` or `safari`, and leaves out a major version outside 1 to 999. Any other browser is `{ name: 'other' }`. Chrome is named only by its brands, since every Chromium browser carries Chrome's User-Agent token. It returns `undefined` when `nav` has neither a Chromium brand nor a User-Agent.
 
-The main module also exports `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`, `newMemoryStorage()`, `systemClock`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `WebCollectorOptions` and `ExtensionCollectorOptions` come from their own modules.
+The main module also exports `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`, `newMemoryStorage()`, `systemClock`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `WebCollectorOptions`, `ExtensionCollectorOptions` and `DesktopCollectorOptions` come from their own modules.
 
 ## Sending
 
@@ -198,11 +190,11 @@ A `get` or `set` that fails goes to `onError`, and the method that called it sto
 
 ## Platform modules
 
-The core touches no platform API. Two optional modules hold the code a website or an extension would otherwise write for itself.
+The core touches no platform API. Three optional modules hold the code a website, an extension or a desktop app would otherwise write for itself.
 
 ### `@kk-forge/artel-collector/web`
 
-For a website, a web app, or a window of a Tauri desktop app.
+For a website or a web app. The desktop module builds on its storage and lock.
 
 - `newWebCollector(options)` makes a collector for a website or a web app, as in "Usage".
 - `newLocalStorageAdapter()` returns a `storage` over `localStorage`. Every script of the origin can read it, the queued events with their `id` and the last id `getId` gave included, and no other storage of the origin hides them from its scripts. A site that runs untrusted scripts uses an anonymous channel.
@@ -229,6 +221,7 @@ For a Chrome extension. Its service worker and its pages each make a collector w
 
 - `newExtensionCollector(options)` makes a collector for the service worker or a page, as in "Usage". It needs the `storage` permission. In the service worker it closes `chrome.storage.local` to content scripts with `setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })`, since a content script that could write the user's choice, the queue and the last id `getId` gave could send events the user refused. The collector reads and writes no storage until Chrome answers the call, and a failure of the call goes to `onError`. The call runs only in the service worker, so build the collector at the top level of the worker: until it runs, content scripts keep access to `chrome.storage.local`. The call closes the whole `chrome.storage.local` area, every key and not only the collector's, even when the product passes its own `storage`. So a content script of the product that reads its own settings there must get them from the worker instead. `setAccessLevel` needs Chrome 102 or later. The collector calls it again on each start of the service worker.
 - `newChromeStorageAdapter()` returns a `storage` over `chrome.storage.local`.
+- `newContentScriptCollector()` returns the collector of a content script, typed `ContentScriptCollector`: `track` and `flush` only. Its `track` is `forwardTrack`, so the worker's collector checks, queues and sends the event under the user's choice, and `flush` does nothing. The user's choice lives in the service worker and the extension pages, so a content script can neither read nor change it, and its types say so. It reads no storage, needs no key, version or endpoint, and never throws.
 - `forwardTrack(name, params?)` hands an event from a content script to the service worker. A content script's own requests carry the page's origin, which the intake refuses. It never rejects. While the worker cannot take the message, as during an update, the event is lost.
 - `acceptForwarded(collector, { clock }?)` tracks, in the service worker, the events content scripts forward, and returns the function that stops it. It takes them only from this extension, and only the product's own events. It refuses every system event of the intake, which the intake counts from any product without its allowlist: `installed`, `updated`, `opted_out`, `uninstalled`, `welcome_opened`, `page_view` and `install_click`. It also refuses each event `track` refuses. A page can open any number of frames that run the content script. So the worker tracks at most 60 forwarded events a minute from all tabs and frames together, and drops the rest. It keeps the count in memory, so a restart of the worker starts it again. `clock` is the time source, as in Options.
 - `refreshUninstallUrl(collector, pageUrl, { onError }?)` sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone when `uninstallParams()` resolves to `undefined`. Chrome keeps the address as it was set, so call it on each start of the worker and after each `setState`. It never rejects. A failure of `uninstallParams()` goes to the collector's `onError`, and any other failure to the function's own `onError`.
@@ -257,10 +250,17 @@ async function storeChoice(choice: AnalyticsState): Promise<void> {
 }
 
 // content script
-import { forwardTrack } from '@kk-forge/artel-collector/extension';
+import { newContentScriptCollector } from '@kk-forge/artel-collector/extension';
 
-void forwardTrack('link_shared', { target: 'clipboard' });
+const usage = newContentScriptCollector();
+void usage.track('link_shared', { target: 'clipboard' });
 ```
+
+### `@kk-forge/artel-collector/desktop`
+
+For a window of a desktop app, such as a Tauri webview.
+
+- `newDesktopCollector(options)` makes a collector for a desktop window, as in "Usage". It takes `platform` as `'macos'`, `'windows'` or `'linux'`, the platforms a `desktop` channel takes. Its windows share the webview's `localStorage` through `newLocalStorageAdapter()` and its Web Locks through `newWebLock()`, so they keep one queue and one state. It names no browser and sends no page.
 
 ## What is sent
 

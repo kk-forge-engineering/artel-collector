@@ -28,11 +28,6 @@ export class FakeChrome {
     },
   };
 
-  /** The locale Chrome picked from the extension's `_locales`, as its `ui_language` message names it. */
-  uiLocale = 'es_419';
-
-  readonly i18n = { getMessage: (name: string): string => (name === 'ui_language' ? this.uiLocale : '') };
-
   readonly runtime = {
     id: EXTENSION_ID,
     getManifest: (): { version: string } => ({ version: '3.1.0' }),

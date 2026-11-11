@@ -26,8 +26,7 @@ export type WebCollectorOptions = Omit<CommonOptions, 'storage'> & {
 /**
  * Returns a collector for a website or a web app. It runs over `localStorage` and Web Locks, and sends the user's
  * language from `navigator.language`, the page from `pageFields` and, in the identified state, the browser from
- * `detectBrowser`. The site passes its own `uiLanguage`. A Tauri desktop window builds its own with `newCollector` and
- * this module's helpers.
+ * `detectBrowser`. The site passes its own `uiLanguage`. A desktop window uses `newDesktopCollector`.
  */
 export function newWebCollector(
   options: WebCollectorOptions & { mode: typeof Mode.Identified },

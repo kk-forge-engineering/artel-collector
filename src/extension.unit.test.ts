@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newChromeStorageAdapter, newExtensionCollector, refreshUninstallUrl } from './extension.js';
-import { AnalyticsState } from './exports.js';
+import { AnalyticsState, newMemoryStorage } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
 import { ENDPOINT, KEY, newHarness, USER_ID } from '../tests/harness.js';
 import { stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
@@ -41,7 +41,7 @@ describe('newExtensionCollector', () => {
     return { chrome, fetch };
   }
 
-  it('sends the manifest version and the primary languages of the user and of the interface, over chrome.storage.local', async () => {
+  it('sends the manifest version and the primary browser language, over chrome.storage.local', async () => {
     const { chrome, fetch } = stubWorker();
     const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
 
@@ -54,16 +54,14 @@ describe('newExtensionCollector', () => {
       platform: 'extension',
       version: '3.1.0',
       browser_language: 'pt',
-      ui_language: 'es',
     });
     expect(envelope).not.toHaveProperty('id');
     expect(envelope).not.toHaveProperty('browser');
     expect(chrome.items.size).toBeGreaterThan(0);
   });
 
-  it('sends no interface language for an extension whose locales have no ui_language message', async () => {
-    const { chrome, fetch } = stubWorker();
-    chrome.uiLocale = '';
+  it('sends no interface language unless the product gives one', async () => {
+    const { fetch } = stubWorker();
     const errors: Error[] = [];
     const usage = newExtensionCollector({
       key: KEY,
@@ -89,13 +87,12 @@ describe('newExtensionCollector', () => {
 
     expect(fetch.requests[0]?.envelope).toMatchObject({
       browser_language: 'pt-BR',
-      ui_language: 'es-419',
       browser: { name: 'chrome', major: 131 },
       id: USER_ID,
     });
   });
 
-  it('takes the interface language it is given over the locale of the extension', async () => {
+  it('sends the interface language the product gives', async () => {
     const { fetch } = stubWorker();
     const usage = newExtensionCollector({
       key: KEY,
@@ -140,6 +137,26 @@ describe('newExtensionCollector', () => {
 
     expect(fetch.requests[0]?.envelope.version).toBe('3.1.0');
     expect(chrome.items.size).toBeGreaterThan(0);
+  });
+
+  it('builds outside an extension context with only a version, and sends no interface language', async () => {
+    vi.stubGlobal('chrome', undefined);
+    const fetch = new FakeFetch();
+    vi.stubGlobal('fetch', fetch.fetch);
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const usage = newExtensionCollector({
+      key: KEY,
+      version: '3.1.0',
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      storage: newMemoryStorage(),
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({ platform: 'extension', version: '3.1.0' });
+    expect(fetch.requests[0]?.envelope).not.toHaveProperty('ui_language');
   });
 
   it('keeps platform extension when the options carry another platform, which their type leaves out', async () => {
