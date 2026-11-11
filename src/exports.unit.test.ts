@@ -49,14 +49,7 @@ describe('the public API', () => {
       ]),
     );
     expect(new Set(Object.keys(web))).toEqual(
-      new Set([
-        'flushWhenHidden',
-        'newLocalStorageAdapter',
-        'newWebCollector',
-        'newWebLock',
-        'pageFields',
-        'trackPageViews',
-      ]),
+      new Set(['newLocalStorageAdapter', 'newWebCollector', 'newWebLock', 'pageFields', 'trackPageViews']),
     );
     expect(new Set(Object.keys(extension))).toEqual(
       new Set([

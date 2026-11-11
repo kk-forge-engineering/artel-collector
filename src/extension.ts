@@ -4,6 +4,7 @@ import { newCollector } from './collector.js';
 import { Mode, type Collector, type CommonOptions, type Delivery, type ModeOptions } from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { eventProblem } from './eventCheck.js';
+import { flushOnHide } from './flushOnHide.js';
 import { reportTo } from './hostInput.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
@@ -52,7 +53,8 @@ export function newExtensionCollector(
 ): Collector<'anonymous'>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
-  const closed = isServiceWorker() ? closeToContentScripts(options.onError) : Promise.resolve();
+  const isWorker = isServiceWorker();
+  const closed = isWorker ? closeToContentScripts(options.onError) : Promise.resolve();
   const defaults = {
     platform: Platform.Extension,
     // The function reads each default only when the caller leaves the option out, so outside an extension it needs only
@@ -62,9 +64,12 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
-  return options.mode === Mode.Anonymous
-    ? newCollector({ ...options, ...defaults })
-    : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+  const collector =
+    options.mode === Mode.Anonymous
+      ? newCollector({ ...options, ...defaults })
+      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+  // An extension page is hidden as a tab is. The service worker has no page.
+  return isWorker ? collector : flushOnHide(collector);
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */

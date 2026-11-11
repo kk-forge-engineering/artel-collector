@@ -10,6 +10,7 @@ import {
   type PageOptions,
 } from './collectorTypes.js';
 import { PAGE_VIEW, Platform } from './envelope.js';
+import { flushOnHide } from './flushOnHide.js';
 import type { Lock } from './lock.js';
 import type { StorageAdapter } from './storage.js';
 
@@ -44,9 +45,11 @@ export function newWebCollector(options: WebCollectorOptions): Collector {
     browserLanguage: options.browserLanguage ?? navigator.language,
     getPage: options.getPage ?? pageFieldsWherePageIs,
   };
-  return options.mode === Mode.Anonymous
-    ? newCollector({ ...options, ...defaults })
-    : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+  return flushOnHide(
+    options.mode === Mode.Anonymous
+      ? newCollector({ ...options, ...defaults })
+      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) }),
+  );
 }
 
 /**
@@ -160,19 +163,4 @@ function callAfter(method: 'pushState' | 'replaceState', listener: () => void): 
 function navigationApi(): EventTarget | undefined {
   const navigation: unknown = Reflect.get(globalThis, 'navigation');
   return navigation instanceof EventTarget ? navigation : undefined;
-}
-
-/**
- * Flushes the queue when the page is hidden, since the user may not return. A request to `endpoint` that started
- * before the tab closes still finishes. A send not yet started waits for the next visit. Returns the function that
- * removes the listener.
- */
-export function flushWhenHidden(collector: Collector): () => void {
-  const onChange = (): void => {
-    if (document.visibilityState === 'hidden') {
-      void collector.flush();
-    }
-  };
-  document.addEventListener('visibilitychange', onChange);
-  return () => document.removeEventListener('visibilitychange', onChange);
 }
