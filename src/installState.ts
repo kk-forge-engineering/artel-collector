@@ -25,7 +25,7 @@ const StorageKey = {
   State: 'state',
   /** The random id of the pseudonymous state, `''` once the user left that state. */
   InstallId: 'install_id',
-  /** The last id `getId` gave, `''` when none names the user, or `FORGOTTEN_ID` after the host forgot the user. */
+  /** The last id an envelope named the user by, `''` when none does, or `FORGOTTEN_ID` after the host forgot it. */
   LastId: 'last_id',
   Session: 'session',
   SessionSeen: 'session_seen',
@@ -52,11 +52,11 @@ interface InstallState {
   state(): Promise<string | undefined>;
   setState(state: string): Promise<void>;
   /**
-   * Returns the last id `getId` gave while the user was identified, or undefined. After `forgetLastId` it returns a
-   * value no id equals.
+   * Returns the last id an envelope named the user by, the install id or the id from `getId`, or undefined. After
+   * `forgetLastId` it returns a value no id equals.
    */
   lastId(): Promise<string | undefined>;
-  /** Stores the id `getId` gave, or `''` once no id names the user. */
+  /** Stores the id an envelope names the user by, or `''` once no id does. */
   setLastId(id: string): Promise<void>;
   /** Stores a last id that no id equals, so the next id counts as another user. */
   forgetLastId(): Promise<void>;

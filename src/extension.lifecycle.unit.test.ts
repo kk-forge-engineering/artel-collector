@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AnalyticsState, newMemoryStorage } from './exports.js';
-import { forwardTrack, newExtensionCollector } from './extension.js';
+import { newExtensionCollector } from './extension.js';
 import { newExtensionHarness, stubChrome } from '../tests/fakeChrome.js';
 import { FakeClock } from '../tests/fakeClock.js';
 import { KEY } from '../tests/harness.js';
@@ -40,15 +40,6 @@ describe('the service worker collector', () => {
     await settle();
 
     expect([chrome.startupListeners.size, fetch.requests, errors]).toEqual([1, [], []]);
-  });
-
-  it('tracks the events content scripts forward', async () => {
-    const { fetch, settle } = newExtensionHarness({ isWorker: true });
-
-    await forwardTrack('link_shared', { target: 'clipboard' });
-    await settle();
-
-    expect(fetch.events.map((event) => [event.name, event.params])).toEqual([['link_shared', { target: 'clipboard' }]]);
   });
 });
 

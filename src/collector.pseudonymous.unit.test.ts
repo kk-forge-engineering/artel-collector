@@ -151,25 +151,6 @@ describe('a change between the pseudonymous and the identified state', () => {
     expect(after).not.toBe(before);
   });
 
-  it('forgets the install id when the user moves to the identified state', async () => {
-    const harness = newHarness({ getId: () => USER_ID, state: AnalyticsState.Pseudonymous });
-    await harness.collector.track('a');
-    await harness.settle();
-
-    await harness.collector.setState(AnalyticsState.Identified);
-
-    expect(harness.fetch.forgets.map((forget) => forget.id)).toEqual([harness.fetch.requests[0]?.envelope.id]);
-  });
-
-  it('forgets the account id when the user moves to the pseudonymous state', async () => {
-    const harness = newHarness({ getId: () => USER_ID });
-    await harness.collector.track('a');
-
-    await harness.collector.setState(AnalyticsState.Pseudonymous);
-
-    expect(harness.fetch.forgets.map((forget) => forget.id)).toEqual([USER_ID]);
-  });
-
   it('sends what waited for the account id under that id after the change', async () => {
     let id: string | undefined;
     const harness = newHarness({ getId: () => id, state: AnalyticsState.Pseudonymous });

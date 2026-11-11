@@ -100,6 +100,7 @@ describe('forget(id)', () => {
   it.each([
     ['empty', ''],
     ['past 64 characters', 'é'.repeat(65)],
+    ['no string, from a host outside TypeScript', fromUntypedHost<string>(42)],
   ])('refuses an id that is %s, which the intake would refuse', async (_case, id) => {
     const harness = newHarness({ getId: () => USER_ID });
 
@@ -177,16 +178,5 @@ describe('the answer to a forget', () => {
     await harness.collector.flush();
 
     expect(harness.fetch.forgets).toEqual([]);
-  });
-});
-
-describe('a host outside TypeScript that calls forget', () => {
-  it('refuses an id that is no string', async () => {
-    const harness = newHarness({ getId: () => USER_ID });
-
-    await harness.collector.forget(fromUntypedHost(42));
-
-    expect(harness.fetch.forgets).toEqual([]);
-    expect(harness.errors).toHaveLength(1);
   });
 });

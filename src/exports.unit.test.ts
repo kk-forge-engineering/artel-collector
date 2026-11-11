@@ -227,11 +227,14 @@ describe('the public API', () => {
   });
 
   it('takes a mode known only at run time on every platform constructor', () => {
-    // The last overload is the one a mode known only at run time takes.
-    expectTypeOf<Parameters<typeof core.newCollector>[0]>().toEqualTypeOf<CollectorOptions>();
-    expectTypeOf<Parameters<typeof web.newWebCollector>[0]>().toEqualTypeOf<WebCollectorOptions>();
-    expectTypeOf<Parameters<typeof extension.newExtensionCollector>[0]>().toEqualTypeOf<ExtensionCollectorOptions>();
-    expectTypeOf<Parameters<typeof desktop.newDesktopCollector>[0]>().toEqualTypeOf<DesktopCollectorOptions>();
+    expectTypeOf((options: CollectorOptions) => core.newCollector(options)).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: WebCollectorOptions) => web.newWebCollector(options)).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: ExtensionCollectorOptions) =>
+      extension.newExtensionCollector(options),
+    ).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: DesktopCollectorOptions) =>
+      desktop.newDesktopCollector(options),
+    ).returns.toEqualTypeOf<Collector>();
   });
 
   it('takes only a desktop platform, and no browser or page, in desktop options', () => {

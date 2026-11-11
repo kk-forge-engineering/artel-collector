@@ -31,10 +31,7 @@ const SEND_DELAY_SECONDS = 5;
  * envelope, such as a bad key, version or endpoint, and for options only a host outside TypeScript passes. A language
  * that breaks the intake's format is left out and goes to `onError`, since it often comes from the browser.
  */
-export function newCollector(options: CollectorOptions & { mode: typeof Mode.Identified }): Collector<'identified'>;
-export function newCollector(options: CollectorOptions & { mode: typeof Mode.Pseudonymous }): Collector<'pseudonymous'>;
-export function newCollector(options: CollectorOptions & { mode: typeof Mode.Anonymous }): Collector<'anonymous'>;
-export function newCollector(options: CollectorOptions): Collector;
+export function newCollector<M extends Mode>(options: CollectorOptions & { mode: M }): Collector<M>;
 export function newCollector(options: CollectorOptions): Collector {
   const product = checkedBuild(options);
   const { mode } = options;
@@ -101,9 +98,9 @@ export function newCollector(options: CollectorOptions): Collector {
   }
 
   /**
-   * Stores the id `getId` gave. An id other than the last one means another user: the events of the last one, and
-   * those that waited for an id after it, are dropped, so none goes under another user's id. The session ends, so no
-   * session holds the events of two users.
+   * Stores the id an envelope names the user by. An id other than the last one means another user: the events of the
+   * last one, and those that waited for an id after it, are dropped, so none goes under another user's id. The session
+   * ends, so no session holds the events of two users.
    */
   async function noteId(id: string): Promise<void> {
     const last = await install.lastId();
@@ -170,11 +167,6 @@ export function newCollector(options: CollectorOptions): Collector {
     return hadId;
   }
 
-  /** Drops what was not sent, except an `opted_out`. */
-  async function discardForOptOut(): Promise<void> {
-    await giveBack(await outbox.discard());
-  }
-
   /**
    * Finishes a change of state that a stopped run or a change of the channel's mode left. Stores a state this channel
    * no longer takes as anonymous. Leaves the last id in a state without one, and drops the queue in the opted_out
@@ -192,7 +184,7 @@ export function newCollector(options: CollectorOptions): Collector {
       await leaveIdentity();
     }
     if (state === AnalyticsState.OptedOut) {
-      await discardForOptOut();
+      await giveBack(await outbox.discard());
     }
   }
 
@@ -344,7 +336,7 @@ export function newCollector(options: CollectorOptions): Collector {
         const hadId = await storeState(previous, next);
         if (next === AnalyticsState.OptedOut) {
           // Events from before the opt-out that have not gone yet never go.
-          await discardForOptOut();
+          await giveBack(await outbox.discard());
           await recordOptOut();
         }
         // A new session keeps the intake from tying together events from before and after the change.

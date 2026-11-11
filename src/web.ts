@@ -29,14 +29,7 @@ export type WebCollectorOptions = Omit<CommonOptions, 'storage'> & {
  * language from `navigator.language`, the page from `pageFields` and, in a state with an id, the browser from
  * `detectBrowser`. The site passes its own `uiLanguage`. A desktop window uses `newDesktopCollector`.
  */
-export function newWebCollector(
-  options: WebCollectorOptions & { mode: typeof Mode.Identified },
-): Collector<'identified'>;
-export function newWebCollector(
-  options: WebCollectorOptions & { mode: typeof Mode.Pseudonymous },
-): Collector<'pseudonymous'>;
-export function newWebCollector(options: WebCollectorOptions & { mode: typeof Mode.Anonymous }): Collector<'anonymous'>;
-export function newWebCollector(options: WebCollectorOptions): Collector;
+export function newWebCollector<M extends Mode>(options: WebCollectorOptions & { mode: M }): Collector<M>;
 export function newWebCollector(options: WebCollectorOptions): Collector {
   const defaults = {
     platform: Platform.Web,

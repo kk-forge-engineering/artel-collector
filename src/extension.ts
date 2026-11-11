@@ -57,16 +57,7 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
  * forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of the
  * worker, so the product builds it there. A page's collector sends its queue when the page is hidden.
  */
-export function newExtensionCollector(
-  options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
-): Collector<'identified'>;
-export function newExtensionCollector(
-  options: ExtensionCollectorOptions & { mode: typeof Mode.Pseudonymous },
-): Collector<'pseudonymous'>;
-export function newExtensionCollector(
-  options: ExtensionCollectorOptions & { mode: typeof Mode.Anonymous },
-): Collector<'anonymous'>;
-export function newExtensionCollector(options: ExtensionCollectorOptions): Collector;
+export function newExtensionCollector<M extends Mode>(options: ExtensionCollectorOptions & { mode: M }): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
   const isWorker = isServiceWorker();
   const closed = isWorker ? closeToContentScripts(options.onError) : Promise.resolve();
@@ -122,7 +113,8 @@ function withUninstallPage(
   if (pageUrl === undefined) {
     return collector;
   }
-  void refreshUninstallUrl(collector, pageUrl, onError);
+  const refresh = async (): Promise<void> => setUninstallUrl(pageUrl, await collector.uninstallParams(), onError);
+  void refresh();
   return {
     ...collector,
     setState: async (state) => {
@@ -132,7 +124,7 @@ function withUninstallPage(
         await setUninstallUrl(pageUrl, undefined, onError);
       }
       await collector.setState(state);
-      await refreshUninstallUrl(collector, pageUrl, onError);
+      await refresh();
     },
   };
 }
@@ -242,19 +234,9 @@ function acceptForwarded(collector: Collector, clock: Clock): void {
 }
 
 /**
- * Sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone
- * when `uninstallParams()` resolves to undefined. It resolves and never rejects. `uninstallParams()` reports its own
- * failure, and any other failure goes to `onError`.
+ * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It resolves
+ * and never rejects: a failure goes to `onError`.
  */
-async function refreshUninstallUrl(
-  collector: Collector,
-  pageUrl: string,
-  onError: ((error: Error) => void) | undefined,
-): Promise<void> {
-  await setUninstallUrl(pageUrl, await collector.uninstallParams(), onError);
-}
-
-/** Sets the uninstall page to `pageUrl` with `params` added to its query. A failure goes to `onError`. */
 async function setUninstallUrl(
   pageUrl: string,
   params: UninstallParams | undefined,

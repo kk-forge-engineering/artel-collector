@@ -27,16 +27,7 @@ export type DesktopCollectorOptions = Omit<CommonOptions, 'storage'> & {
  * `navigator.language`. The app passes its own `uiLanguage`. It sends `installed` and `updated` itself when they are
  * due, and its queue when the window is hidden.
  */
-export function newDesktopCollector(
-  options: DesktopCollectorOptions & { mode: typeof Mode.Identified },
-): Collector<'identified'>;
-export function newDesktopCollector(
-  options: DesktopCollectorOptions & { mode: typeof Mode.Pseudonymous },
-): Collector<'pseudonymous'>;
-export function newDesktopCollector(
-  options: DesktopCollectorOptions & { mode: typeof Mode.Anonymous },
-): Collector<'anonymous'>;
-export function newDesktopCollector(options: DesktopCollectorOptions): Collector;
+export function newDesktopCollector<M extends Mode>(options: DesktopCollectorOptions & { mode: M }): Collector<M>;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector {
   const collector = newCollector({
     ...options,
@@ -48,6 +39,5 @@ export function newDesktopCollector(options: DesktopCollectorOptions): Collector
   // lock, so every window may build a collector. The collector runs its calls in this order.
   void collector.installed();
   void collector.updated();
-  // A window closes as a page does.
   return flushOnHide(collector);
 }
