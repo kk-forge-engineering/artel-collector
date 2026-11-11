@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Collector } from './exports.js';
+import { AnalyticsState, type Collector } from './exports.js';
 import { eventNamesIn } from '../tests/fakeFetch.js';
 import { newSharedLock } from '../tests/sharedLock.js';
 import {
@@ -10,6 +10,7 @@ import {
   attemptStartMs,
   newHarness,
   type Harness,
+  USER_ID,
 } from '../tests/harness.js';
 
 describe('failures', () => {
@@ -36,13 +37,40 @@ describe('failures', () => {
     expect(calls).toBe(5);
   });
 
+  it('waits the retry delay after a 429 even when an event armed a send during the slow request', async () => {
+    const starts: number[] = [];
+    const answers = [429, 204, 204];
+    const harness = newHarness();
+    const collector = harness.restart({
+      transport: (_body) =>
+        new Promise<number>((resolve) => {
+          starts.push(harness.clock.now());
+          harness.clock.setTimeout(() => resolve(answers.shift() ?? 204), 10_000);
+        }),
+    });
+    const start = harness.clock.now();
+
+    await collector.track('a');
+    await harness.clock.advance(SEND_DELAY_MS + 1_000);
+    await collector.track('b');
+    await harness.clock.advance(MAX_RETRY_DELAY_MS);
+
+    // The first request starts after the send delay and answers 429 ten seconds later. The retry waits its delay from
+    // that answer, then sends `a` and `b` one after the other.
+    expect(starts.map((time) => time - start)).toEqual([
+      SEND_DELAY_MS,
+      SEND_DELAY_MS + 10_000 + RETRY_DELAY_MS,
+      SEND_DELAY_MS + 20_000 + RETRY_DELAY_MS,
+    ]);
+  });
+
   it('drops an envelope the intake rejects with 4xx, without a retry, and sends the next one', async () => {
     let id: string | undefined;
     const harness = newHarness({ getId: () => id });
     harness.fetch.respondNextWith(400);
 
     await harness.collector.track('a');
-    id = 'c0ffee12';
+    id = USER_ID;
     await harness.collector.track('b');
     await harness.settle();
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
@@ -51,7 +79,20 @@ describe('failures', () => {
     expect(harness.errors).toHaveLength(1);
   });
 
+  it('drops and reports an envelope its transport answers with a status below 200, without a retry', async () => {
+    const statuses: number[] = [];
+    const harness = newHarness({ transport: async () => (statuses.push(101), 101) });
+
+    await harness.collector.track('a');
+    await harness.settle();
+    await harness.clock.advance(MAX_RETRY_DELAY_MS);
+
+    expect(statuses).toEqual([101]);
+    expect(harness.errors).toEqual([new Error('artel: intake answered 101')]);
+  });
+
   it.each([
+    ['a 500', (harness: Harness) => harness.fetch.respondNextWith(500)],
     ['a 503', (harness: Harness) => harness.fetch.respondNextWith(503)],
     ['a 429', (harness: Harness) => harness.fetch.respondNextWith(429)],
     ['a network error', (harness: Harness) => harness.fetch.failNextWithNetworkError()],
@@ -117,6 +158,7 @@ describe('failures', () => {
     await harness.clock.advance(SEND_DELAY_MS);
     await harness.collector.track('b');
     await harness.collector.flush();
+    await harness.clock.advance(RETRY_DELAY_MS);
 
     expect(harness.fetch.eventNames).toEqual(['a', 'a', 'b']);
   });
@@ -152,6 +194,21 @@ describe('failures', () => {
     expect(harness.errors).toHaveLength(1);
   });
 
+  it('says only that the queue is full when envelopes that wait for an id fill it', async () => {
+    const harness = newHarness({ getId: () => undefined });
+
+    for (let index = 0; index < 21; index++) {
+      await harness.collector.track('waiting');
+      harness.clock.jumpMinutes(11);
+    }
+    await harness.settle();
+
+    expect(harness.fetch.requests).toEqual([]);
+    expect(harness.errors).toEqual([
+      new Error('artel: the queue holds at most 20 envelopes, so the oldest 1 were dropped'),
+    ]);
+  });
+
   it('drops waiting events from before yesterday, which the intake would count as today', async () => {
     const harness = newHarness();
     harness.fetch.respondNextWith(503, 2);
@@ -178,34 +235,35 @@ describe('failures', () => {
     expect(harness.fetch.eventNames).toEqual(['a', 'a', 'a']);
   });
 
-  it('drops a waiting envelope whose id getId no longer returns, as after a withdrawn consent', async () => {
-    let id: string | undefined = 'c0ffee12';
+  it('still sends a waiting envelope under its id after getId stops returning it, as after a sign-out', async () => {
+    let id: string | undefined = USER_ID;
     const harness = newHarness({ getId: () => id });
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track('a');
     await harness.settle();
 
     id = undefined;
-    await harness.collector.track('b');
     await harness.collector.flush();
+    // Two failures in a row ask for a wait of 2 s, which a flush keeps too.
+    await harness.clock.advance(2 * RETRY_DELAY_MS);
 
-    expect(harness.fetch.requests.map((request) => request.envelope.id)).toEqual(['c0ffee12', 'c0ffee12', undefined]);
+    expect(harness.fetch.requests.map((request) => request.envelope.id)).toEqual([USER_ID, USER_ID, USER_ID]);
   });
 
   it('drops the queued events of a user the host forgets', async () => {
-    const harness = newHarness({ getId: () => 'c0ffee12' });
+    const harness = newHarness({ getId: () => USER_ID });
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track('a');
     await harness.settle();
 
-    await harness.collector.forget('c0ffee12');
+    await harness.collector.forget(USER_ID);
     await harness.collector.flush();
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
 
     expect(harness.fetch.eventNames).toEqual(['a', 'a']);
   });
 
-  it('drops what a send in flight puts back after another context switched counts off', async () => {
+  it('drops what a send in flight puts back after another context switched to the opted_out state', async () => {
     const sent: string[] = [];
     let calls = 0;
     let other: Collector | undefined;
@@ -214,7 +272,7 @@ describe('failures', () => {
         sent.push(...eventNamesIn(body));
         calls++;
         if (calls === 1) {
-          await other?.setEnabled(false);
+          await other?.setState(AnalyticsState.OptedOut);
           return 503;
         }
         return 204;
@@ -226,10 +284,10 @@ describe('failures', () => {
     await harness.collector.flush();
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
 
-    expect(sent).toEqual(['a', 'usage_counts_off']);
+    expect(sent).toEqual(['a', 'opted_out']);
   });
 
-  it('stops a send in progress before the envelopes another context dropped by switching counts off', async () => {
+  it('stops a send in progress before the envelopes another context dropped by switching to the opted_out state', async () => {
     const sent: string[] = [];
     let other: Collector | undefined;
     const harness = newHarness({
@@ -237,7 +295,7 @@ describe('failures', () => {
         const names = eventNamesIn(body);
         sent.push(...names);
         if (names.includes('a')) {
-          await other?.setEnabled(false);
+          await other?.setState(AnalyticsState.OptedOut);
         }
         return 204;
       },
@@ -250,13 +308,13 @@ describe('failures', () => {
     await harness.collector.flush();
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
 
-    expect(sent).toEqual(['a', 'usage_counts_off']);
+    expect(sent).toEqual(['a', 'opted_out']);
   });
 
   it('resolves forget only after a request already on its way with that id has ended', async () => {
     let answer: (() => void) | undefined;
     const harness = newHarness({
-      getId: () => 'c0ffee12',
+      getId: () => USER_ID,
       transport: async () => {
         await new Promise<void>((resolve) => (answer = resolve));
         return 204;
@@ -267,7 +325,7 @@ describe('failures', () => {
     await harness.clock.advance(0);
 
     let isForgotten = false;
-    const forgotten = harness.collector.forget('c0ffee12').then(() => (isForgotten = true));
+    const forgotten = harness.collector.forget(USER_ID).then(() => (isForgotten = true));
     await harness.clock.advance(0);
     expect(isForgotten).toBe(false);
 
@@ -282,9 +340,10 @@ describe('failures', () => {
     await harness.collector.track('a');
     await harness.settle();
     const other = harness.restart();
-    await other.isEnabled();
+    await other.getState();
 
     await Promise.all([harness.collector.flush(), other.flush()]);
+    await harness.clock.advance(2 * RETRY_DELAY_MS);
 
     expect(harness.fetch.eventNames).toEqual(['a', 'a', 'a']);
   });
@@ -324,7 +383,7 @@ describe('failures', () => {
 
     await expect(harness.collector.track('a')).resolves.toBeUndefined();
     await expect(harness.collector.flush()).resolves.toBeUndefined();
-    await expect(harness.collector.uninstallParams()).resolves.toMatchObject({ platform: 'extension' });
+    await expect(harness.collector.uninstallParams()).resolves.toBeUndefined();
     expect(harness.errors.length).toBeGreaterThan(0);
   });
 

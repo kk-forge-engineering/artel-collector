@@ -1,17 +1,31 @@
 import { Period, formatDay, localDateAt, parseDay, periodKey, type CalendarDate } from './calendar.js';
+import { LifecycleEvent, type Envelope, type UsageEvent } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
 
 const SESSION_ID_LENGTH = 12;
+/**
+ * The most active days the collector stores. It reports the count in buckets, and the last bucket is `21+`, so the
+ * collector needs no more days.
+ */
+const MAX_ACTIVE_DAYS = 21;
+/**
+ * The last id after the host forgets the user. It is longer than the 64 characters of any id the collector takes, so
+ * the next id reads as another user's.
+ */
+const FORGOTTEN_ID = '<forgotten>'.repeat(6);
 
 const StorageKey = {
-  InstallDay: 'artel.install_day',
-  Installed: 'artel.installed',
-  Version: 'artel.version',
-  Enabled: 'artel.enabled',
-  Session: 'artel.session',
-  SessionSeen: 'artel.session_seen',
-  ActiveDays: 'artel.active_days',
-  firstOf: (period: Period) => `artel.first.${period}`,
+  InstallDay: 'install_day',
+  Installed: 'installed',
+  Version: 'version',
+  State: 'state',
+  /** The last id `getId` gave, `''` when none names the user, or `FORGOTTEN_ID` after the host forgot the user. */
+  LastId: 'last_id',
+  Session: 'session',
+  SessionSeen: 'session_seen',
+  /** The local days with a queued or sent event, as a JSON list of `YYYY-MM-DD`. */
+  ActiveDays: 'active_days',
+  firstOf: (period: Period) => `first.${period}`,
 } as const;
 
 /** What the collector knows about one event when it records it. */
@@ -27,17 +41,41 @@ export interface EventStamp {
  * The state one install keeps in storage between runs of the host. The caller runs each method under its lock, since
  * each method reads and then writes.
  */
-export interface InstallState {
-  isEnabled(): Promise<boolean>;
-  setEnabled(on: boolean): Promise<void>;
+interface InstallState {
+  /** Returns the stored analytics state, or undefined when the user never chose one. */
+  state(): Promise<string | undefined>;
+  setState(state: string): Promise<void>;
+  /**
+   * Returns the last id `getId` gave while the user was identified, or undefined. After `forgetLastId` it returns a
+   * value no id equals.
+   */
+  lastId(): Promise<string | undefined>;
+  /** Stores the id `getId` gave, or `''` once no id names the user. */
+  setLastId(id: string): Promise<void>;
+  /** Stores a last id that no id equals, so the next id counts as another user. */
+  forgetLastId(): Promise<void>;
+  /**
+   * Gives back the marks these envelopes' events took that no later event took over, so the next such event takes them
+   * again: first-of-period marks, the `installed` mark, and the `updated` version while it is still stored. A
+   * first-of-day event also removes its day from the active days.
+   */
+  giveBack(envelopes: readonly Pick<Envelope, 'version' | 'events'>[]): Promise<void>;
+  /** Ends the session, so the next event starts a new one. */
+  endSession(): Promise<void>;
   /** Marks the install and stores `version`. Resolves to true, or to false when the install was marked before. */
   takeInstall(version: string): Promise<boolean>;
   /** Stores `version` and resolves to true when it differs from the stored one. */
   takeVersion(version: string): Promise<boolean>;
   /** Returns the stored install day, or stores and returns `today` when none is stored. */
   installDayOr(today: CalendarDate): Promise<CalendarDate>;
-  /** Takes the first-of-period marks for an event at `timestamp`, counts a new active day and renews the session. */
+  /**
+   * Takes the first-of-period marks for an event at `timestamp`, counts a new active day and renews the session. A
+   * failure gives back the marks it took.
+   */
   stamp(timestamp: number): Promise<EventStamp>;
+  /** Renews the session for an event at `timestamp` that takes no mark and counts no active day. */
+  session(timestamp: number): Promise<string>;
+  /** Returns the number of local days with a queued or sent event. */
   activeDays(): Promise<number>;
 }
 
@@ -58,20 +96,69 @@ export function newInstallState({
     return today;
   }
 
-  async function takeFirstMarks(today: CalendarDate): Promise<Period[]> {
-    const marks: Period[] = [];
+  /** Takes the first-of-period marks not taken yet for `today` and adds each to `marks` once taken. */
+  async function takeFirstMarks(today: CalendarDate, marks: Period[]): Promise<void> {
     for (const period of Object.values(Period)) {
       const key = periodKey(period, today);
       if ((await storage.get(StorageKey.firstOf(period))) !== key) {
-        marks.push(period);
         await storage.set(StorageKey.firstOf(period), key);
+        marks.push(period);
       }
     }
-    return marks;
   }
 
-  async function activeDays(): Promise<number> {
-    return Number(await storage.get(StorageKey.ActiveDays)) || 0;
+  /** Returns the stored active days. A stored value that is not a list reads as no days, and only its strings count. */
+  async function readActiveDays(): Promise<string[]> {
+    let days: unknown;
+    try {
+      days = JSON.parse((await storage.get(StorageKey.ActiveDays)) ?? '[]');
+    } catch {
+      return [];
+    }
+    return Array.isArray(days) ? days.filter((day): day is string => typeof day === 'string') : [];
+  }
+
+  async function countActiveDay(day: string): Promise<void> {
+    const days = await readActiveDays();
+    if (days.length < MAX_ACTIVE_DAYS) {
+      await storage.set(StorageKey.ActiveDays, JSON.stringify([...new Set([...days, day])]));
+    }
+  }
+
+  /** Removes a day from the active days. The cap of 21 stops only the count of new days. */
+  async function uncountActiveDay(day: string): Promise<void> {
+    const days = await readActiveDays();
+    await storage.set(StorageKey.ActiveDays, JSON.stringify(days.filter((candidate) => candidate !== day)));
+  }
+
+  async function giveBackMark(period: Period, day: CalendarDate): Promise<void> {
+    if ((await storage.get(StorageKey.firstOf(period))) === periodKey(period, day)) {
+      await storage.set(StorageKey.firstOf(period), '');
+    }
+  }
+
+  async function giveBackFirstMarks(day: CalendarDate, first: readonly Period[]): Promise<void> {
+    for (const period of first) {
+      await giveBackMark(period, day);
+    }
+    // The event that took the day's first mark was the day's first. Its give-back takes the day out of the count.
+    if (first.includes(Period.Day)) {
+      await uncountActiveDay(formatDay(day));
+    }
+  }
+
+  async function giveBackMarksOf(event: UsageEvent, version: string): Promise<void> {
+    const day = parseDay(event.day);
+    if (day !== undefined) {
+      await giveBackFirstMarks(day, event.first ?? []);
+    }
+    if (event.name === LifecycleEvent.Installed) {
+      await storage.set(StorageKey.Installed, '');
+    }
+    // A later `updated` of another version stored its own version, which stays.
+    if (event.name === LifecycleEvent.Updated && (await storage.get(StorageKey.Version)) === version) {
+      await storage.set(StorageKey.Version, '');
+    }
   }
 
   /**
@@ -82,23 +169,45 @@ export function newInstallState({
     const stored = await storage.get(StorageKey.Session);
     const lastSeen = Number(await storage.get(StorageKey.SessionSeen));
     const isIdle = !(timestamp - lastSeen < sessionIdleMs);
-    const session = stored === undefined || isIdle || isNewDay ? newSessionId() : stored;
+    const session = stored === undefined || stored === '' || isIdle || isNewDay ? newSessionId() : stored;
     await storage.set(StorageKey.Session, session);
     await storage.set(StorageKey.SessionSeen, String(timestamp));
     return session;
   }
 
   return {
-    isEnabled: async () => (await storage.get(StorageKey.Enabled)) !== '0',
+    state: () => storage.get(StorageKey.State),
 
-    setEnabled: (on) => storage.set(StorageKey.Enabled, on ? '1' : '0'),
+    lastId: async () => {
+      const id = await storage.get(StorageKey.LastId);
+      return id === '' ? undefined : id;
+    },
+
+    setLastId: (id) => storage.set(StorageKey.LastId, id),
+
+    forgetLastId: () => storage.set(StorageKey.LastId, FORGOTTEN_ID),
+
+    giveBack: async (envelopes) => {
+      for (const { version, events } of envelopes) {
+        for (const event of events) {
+          await giveBackMarksOf(event, version);
+        }
+      }
+    },
+
+    setState: (state) => storage.set(StorageKey.State, state),
+
+    // An empty session reads as none, so the next event takes a new one. The storage has no remove.
+    endSession: () => storage.set(StorageKey.Session, ''),
 
     takeInstall: async (version) => {
-      if ((await storage.get(StorageKey.Installed)) !== undefined) {
+      const mark = await storage.get(StorageKey.Installed);
+      if (mark !== undefined && mark !== '') {
         return false;
       }
-      await storage.set(StorageKey.Installed, '1');
+      // The version goes first, so a failed write leaves the install mark untaken.
       await storage.set(StorageKey.Version, version);
+      await storage.set(StorageKey.Installed, '1');
       return true;
     },
 
@@ -115,15 +224,24 @@ export function newInstallState({
     stamp: async (timestamp) => {
       const today = localDateAt(timestamp);
       const installDay = await installDayOr(today);
-      const first = await takeFirstMarks(today);
-      const isNewDay = first.includes(Period.Day);
-      if (isNewDay) {
-        await storage.set(StorageKey.ActiveDays, String((await activeDays()) + 1));
+      const first: Period[] = [];
+      try {
+        await takeFirstMarks(today, first);
+        const isNewDay = first.includes(Period.Day);
+        if (isNewDay) {
+          await countActiveDay(formatDay(today));
+        }
+        return { today, installDay, first, session: await currentSession(timestamp, isNewDay) };
+      } catch (error) {
+        await giveBackFirstMarks(today, first);
+        throw error;
       }
-      return { today, installDay, first, session: await currentSession(timestamp, isNewDay) };
     },
 
-    activeDays,
+    // The only caller ends the session first, so the session it renews is always a new one.
+    session: (timestamp) => currentSession(timestamp, false),
+
+    activeDays: async () => (await readActiveDays()).length,
   };
 }
 

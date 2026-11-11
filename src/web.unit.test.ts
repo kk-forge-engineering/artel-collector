@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { flushWhenHidden, newLocalStorageAdapter, pageFields, newWebLock } from './web.js';
-import { newHarness } from '../tests/harness.js';
+import { newMemoryStorage } from './exports.js';
+import { flushWhenHidden, newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from './web.js';
+import { FakeFetch } from '../tests/fakeFetch.js';
+import { ENDPOINT, newHarness, USER_ID, SITE_KEY } from '../tests/harness.js';
 
 /** The part of the Web Storage API the adapter uses, over a Map. */
 class FakeWebStorage {
@@ -71,25 +73,60 @@ describe('newWebLock', () => {
 
     await expect(newWebLock()(async () => 'done')).resolves.toBe('done');
   });
+
+  it('runs the operation unguarded where the host has no navigator', async () => {
+    vi.stubGlobal('navigator', undefined);
+
+    await expect(newWebLock()(async () => 'done')).resolves.toBe('done');
+  });
 });
 
 describe('pageFields', () => {
-  it('gives the path and the host of a referring site', () => {
-    vi.stubGlobal('location', { pathname: '/products/editor', hostname: 'example.com' });
+  it('gives the address of the page without its query and fragment, and the referrer as the browser gives it', () => {
+    vi.stubGlobal('location', new URL('https://example.com/products/editor?tab=2#top'));
     vi.stubGlobal('document', new FakeDocument('https://www.google.com/search?q=report'));
 
-    expect(pageFields()).toEqual({ page: '/products/editor', referrer: 'www.google.com' });
+    expect(pageFields()).toEqual({
+      page: 'https://example.com/products/editor',
+      referrer: 'https://www.google.com/search?q=report',
+    });
+  });
+});
+
+describe('the page a web collector sends by default', () => {
+  /** Tracks one page view at `address`, opened from `referrer`, and returns the event sent. */
+  async function sentAt(address: string, referrer = ''): Promise<{ page?: string; referrer?: string }> {
+    const fetch = new FakeFetch();
+    vi.stubGlobal('fetch', fetch.fetch);
+    vi.stubGlobal('navigator', { language: 'de-DE' });
+    vi.stubGlobal('location', new URL(address));
+    vi.stubGlobal('document', new FakeDocument(referrer));
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      storage: newMemoryStorage(),
+    });
+
+    await usage.track('page_view');
+    await usage.flush();
+    return fetch.events[0] ?? {};
+  }
+
+  it.each([
+    ['https://example.com/u/alice@example.com', '/u/:address'],
+    ['https://example.com/docs/index.html', '/docs/index.html'],
+  ])('sends the page at %s as %s', async (address, page) => {
+    expect((await sentAt(address)).page).toBe(page);
   });
 
   it.each([
-    ['the same site', 'https://example.com/products'],
-    ['no referrer', ''],
-    ['a referrer that is not a URL', 'not a url'],
-  ])('leaves out the referrer for %s', (_, referrer) => {
-    vi.stubGlobal('location', { pathname: '/privacy', hostname: 'example.com' });
-    vi.stubGlobal('document', new FakeDocument(referrer));
-
-    expect(pageFields()).toEqual({ page: '/privacy' });
+    ['another site', 'https://docs.example.org:8443/guide', 'docs.example.org'],
+    ['the same site', 'https://example.com/products', undefined],
+    ['no referrer', '', undefined],
+  ])('sends the referring host of %s only when it is another host', async (_, referrer, host) => {
+    expect((await sentAt('https://example.com/privacy', referrer)).referrer).toBe(host);
   });
 });
 
@@ -110,5 +147,188 @@ describe('flushWhenHidden', () => {
     page.hide();
     await harness.clock.advance(0);
     expect(harness.fetch.eventNames).toEqual(['a']);
+  });
+
+  it('sends nothing when the page becomes visible again', async () => {
+    const page = new FakeDocument();
+    vi.stubGlobal('document', page);
+    const harness = newHarness();
+    flushWhenHidden(harness.collector);
+
+    await harness.collector.track('a');
+    page.dispatchEvent(new Event('visibilitychange'));
+    await harness.clock.advance(0);
+
+    expect(harness.fetch.requests).toEqual([]);
+  });
+});
+
+describe('newWebCollector', () => {
+  /**
+   * Stubs a Firefox page at `/editor` with no Web Locks, and returns the network the collector posts to and the fake
+   * `localStorage`.
+   */
+  function stubPage(): { fetch: FakeFetch; webStorage: FakeWebStorage } {
+    const fetch = new FakeFetch();
+    const webStorage = new FakeWebStorage();
+    vi.stubGlobal('fetch', fetch.fetch);
+    vi.stubGlobal('localStorage', webStorage);
+    vi.stubGlobal('navigator', {
+      language: 'de-DE',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
+    });
+    vi.stubGlobal('location', new URL('https://example.com/editor'));
+    vi.stubGlobal('document', new FakeDocument());
+    return { fetch, webStorage };
+  }
+
+  it('sends a web envelope with the primary language of the user and the page, over localStorage, and no id or browser', async () => {
+    const { fetch, webStorage } = stubPage();
+    const usage = newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'anonymous' });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    const envelope = fetch.requests[0]?.envelope;
+    expect(envelope).toMatchObject({ key: SITE_KEY, platform: 'web', version: '1.0.0', browser_language: 'de' });
+    expect(envelope).not.toHaveProperty('ui_language');
+    expect(envelope).not.toHaveProperty('id');
+    expect(envelope).not.toHaveProperty('browser');
+    expect(envelope?.events[0]).toMatchObject({ page: '/editor' });
+    expect(envelope?.events[0]).not.toHaveProperty('referrer');
+    expect([...webStorage.items.keys()].every((key) => key.startsWith('artel.'))).toBe(true);
+    expect(webStorage.items.size).toBeGreaterThan(0);
+  });
+
+  it('sends the page from the getPage it is given', async () => {
+    const { fetch } = stubPage();
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      getPage: pageFields,
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.events[0]).toMatchObject({ page: '/editor' });
+  });
+
+  it('sends the id, the browser and the full language once the user is identified', async () => {
+    const { fetch } = stubPage();
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'identified',
+      getId: () => USER_ID,
+    });
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      id: USER_ID,
+      browser: { name: 'firefox', major: 132 },
+      browser_language: 'de-DE',
+    });
+  });
+
+  it('sends the browser it is given over the one it detects', async () => {
+    const { fetch } = stubPage();
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'identified',
+      getId: () => USER_ID,
+      browser: { name: 'edge', major: 130 },
+    });
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.browser).toEqual({ name: 'edge', major: 130 });
+  });
+
+  it('reads the browser only once the user is identified', async () => {
+    stubPage();
+    let reads = 0;
+    vi.stubGlobal('navigator', {
+      language: 'de-DE',
+      get userAgent(): string {
+        reads++;
+        return 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0';
+      },
+    });
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'identified',
+      getId: () => USER_ID,
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+    expect(reads).toBe(0);
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    const readsForFirstId = reads;
+    await usage.track('report_exported');
+    await usage.flush();
+    expect(readsForFirstId).toBeGreaterThan(0);
+    expect(reads).toBe(readsForFirstId);
+  });
+
+  it('takes the options it is given over its defaults, and a default for an option given as undefined', async () => {
+    const { fetch, webStorage } = stubPage();
+    const usage = newWebCollector({
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'identified',
+      getId: () => USER_ID,
+      browser: undefined,
+      getPage: undefined,
+      browserLanguage: 'en-GB',
+      uiLanguage: 'fr-CA',
+      storage: newMemoryStorage(),
+    });
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    const envelope = fetch.requests[0]?.envelope;
+    expect(envelope).toMatchObject({
+      browser_language: 'en-GB',
+      ui_language: 'fr-CA',
+      browser: { name: 'firefox', major: 132 },
+    });
+    expect(envelope?.events[0]).toMatchObject({ page: '/editor' });
+    expect(webStorage.items.size).toBe(0);
+  });
+
+  it('keeps platform web when the options carry another platform, which their type leaves out', async () => {
+    const { fetch } = stubPage();
+    const desktop = { platform: 'macos' } as const;
+    const usage = newWebCollector({
+      ...desktop,
+      key: SITE_KEY,
+      version: '1.0.0',
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.platform).toBe('web');
   });
 });

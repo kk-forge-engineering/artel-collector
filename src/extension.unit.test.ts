@@ -1,101 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { acceptForwarded, newChromeStorageAdapter, forwardTrack, refreshUninstallUrl } from './extension.js';
-import type { EventParams } from './exports.js';
-import { newHarness, type Harness } from '../tests/harness.js';
-
-const EXTENSION_ID = 'faalhcmobmdfdmmniiplhoniamdooejf';
-const FROM_OTHER_EXTENSION = { id: 'abcdefghijklmnopabcdefghijklmnop' };
-
-type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
-
-class FakeChrome {
-  readonly items = new Map<string, unknown>();
-  readonly sessionItems = new Map<string, unknown>();
-  readonly listeners = new Set<MessageListener>();
-  uninstallUrl = '';
-  isWorkerGone = false;
-
-  readonly storage = {
-    local: {
-      get: async (key: string): Promise<Record<string, unknown>> =>
-        this.items.has(key) ? { [key]: this.items.get(key) } : {},
-      set: async (items: Record<string, unknown>): Promise<void> => {
-        for (const [key, value] of Object.entries(items)) {
-          this.items.set(key, value);
-        }
-      },
-    },
-    session: {
-      get: async (key: string): Promise<Record<string, unknown>> =>
-        this.sessionItems.has(key) ? { [key]: this.sessionItems.get(key) } : {},
-      set: async (items: Record<string, unknown>): Promise<void> => {
-        for (const [key, value] of Object.entries(items)) {
-          this.sessionItems.set(key, value);
-        }
-      },
-    },
-  };
-
-  readonly runtime = {
-    id: EXTENSION_ID,
-    sendMessage: async (message: unknown, sender: { id?: string } = { id: EXTENSION_ID }): Promise<unknown> => {
-      if (this.isWorkerGone) {
-        throw new Error('Could not establish connection. Receiving end does not exist.');
-      }
-      for (const listener of this.listeners) {
-        listener(message, sender);
-      }
-      return undefined;
-    },
-    setUninstallURL: async (url: string): Promise<void> => {
-      this.uninstallUrl = url;
-    },
-    onMessage: {
-      addListener: (listener: MessageListener): void => void this.listeners.add(listener),
-      removeListener: (listener: MessageListener): void => void this.listeners.delete(listener),
-    },
-  };
-}
-
-function stubChrome(): FakeChrome {
-  const chrome = new FakeChrome();
-  vi.stubGlobal('chrome', chrome);
-  return chrome;
-}
-
-/** Starts accepting forwarded events on the harness clock, which the budget counts its minutes by. */
-function startForwarding(): { chrome: FakeChrome; harness: Harness; stop: () => void } {
-  const chrome = stubChrome();
-  const harness = newHarness();
-  const stop = acceptForwarded(harness.collector, { clock: harness.clock });
-  return { chrome, harness, stop };
-}
-
-/** Forwards an event `times` times, each once the one before it reached the worker. */
-async function forwardOneByOne({
-  times,
-  name,
-  params,
-}: {
-  times: number;
-  name: string;
-  params?: EventParams;
-}): Promise<void> {
-  for (let index = 0; index < times; index++) {
-    await forwardTrack(name, params);
-  }
-}
-
-/** Forwards an event `times` times before the worker takes any of them. */
-function forwardAllAtOnce(times: number, name: string): void {
-  for (let index = 0; index < times; index++) {
-    void forwardTrack(name);
-  }
-}
-
-function timesTracked(harness: Harness, name: string): number {
-  return harness.fetch.eventNames.filter((eventName) => eventName === name).length;
-}
+import { newChromeStorageAdapter, newExtensionCollector, refreshUninstallUrl } from './extension.js';
+import { AnalyticsState } from './exports.js';
+import { FakeFetch } from '../tests/fakeFetch.js';
+import { ENDPOINT, KEY, newHarness, USER_ID } from '../tests/harness.js';
+import { stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
+import { fromUntypedHost } from '../tests/untypedHost.js';
 
 describe('newChromeStorageAdapter', () => {
   it('keeps string values in chrome.storage.local and answers undefined for others', async () => {
@@ -117,211 +26,263 @@ describe('newChromeStorageAdapter', () => {
   });
 });
 
-describe('forwarding from a content script', () => {
-  it('tracks a forwarded event in the worker, and nothing once stopped', async () => {
-    stubChrome();
-    const harness = newHarness();
-    const stop = acceptForwarded(harness.collector);
+describe('newExtensionCollector', () => {
+  /**
+   * Stubs a Chrome 131 worker with no Web Locks, and returns the fake Chrome and the network the collector posts to.
+   */
+  function stubWorker(): { chrome: FakeChrome; fetch: FakeFetch } {
+    const chrome = stubChrome();
+    const fetch = new FakeFetch();
+    vi.stubGlobal('fetch', fetch.fetch);
+    vi.stubGlobal('navigator', {
+      language: 'pt-BR',
+      userAgentData: { brands: [{ brand: 'Google Chrome', version: '131' }] },
+    });
+    return { chrome, fetch };
+  }
 
-    await forwardTrack('link_shared', { target: 'clipboard' });
-    await harness.settle();
-    stop();
-    await forwardTrack('link_opened');
-    await harness.settle();
+  it('sends the manifest version and the primary languages of the user and of the interface, over chrome.storage.local', async () => {
+    const { chrome, fetch } = stubWorker();
+    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
 
-    expect(harness.fetch.events.map((event) => [event.name, event.params])).toEqual([
-      ['link_shared', { target: 'clipboard' }],
-    ]);
+    await usage.track('report_exported');
+    await usage.flush();
+
+    const envelope = fetch.requests[0]?.envelope;
+    expect(envelope).toMatchObject({
+      key: KEY,
+      platform: 'extension',
+      version: '3.1.0',
+      browser_language: 'pt',
+      ui_language: 'es',
+    });
+    expect(envelope).not.toHaveProperty('id');
+    expect(envelope).not.toHaveProperty('browser');
+    expect(chrome.items.size).toBeGreaterThan(0);
   });
 
-  it.each([
-    ['another type', { type: 'other', name: 'a' }],
-    ['no name', { type: 'artel.track' }],
-    ['params that are not values', { type: 'artel.track', name: 'a', params: { nested: { deep: true } } }],
-    ['params that are a list', { type: 'artel.track', name: 'a', params: ['a', 'b'] }],
-    ['no object', 'artel.track'],
-    ['an event the collector sends itself', { type: 'artel.track', name: 'usage_counts_off' }],
-    ['a name past 40 characters', { type: 'artel.track', name: 'a'.repeat(41) }],
-    ['a param name past 40 characters', { type: 'artel.track', name: 'a', params: { ['p'.repeat(41)]: 1 } }],
-    ['a string param past 64 characters', { type: 'artel.track', name: 'a', params: { source: 's'.repeat(65) } }],
-    [
-      'more than 16 params',
-      {
-        type: 'artel.track',
-        name: 'a',
-        params: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p${i}`, i])),
+  it('sends no interface language for an extension whose locales have no ui_language message', async () => {
+    const { chrome, fetch } = stubWorker();
+    chrome.uiLocale = '';
+    const errors: Error[] = [];
+    const usage = newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      onError: (error) => errors.push(error),
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).not.toHaveProperty('ui_language');
+    expect(errors).toEqual([]);
+  });
+
+  it('sends the id, the browser and the full languages once the user is identified', async () => {
+    const { fetch } = stubWorker();
+    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'identified', getId: () => USER_ID });
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      browser_language: 'pt-BR',
+      ui_language: 'es-419',
+      browser: { name: 'chrome', major: 131 },
+      id: USER_ID,
+    });
+  });
+
+  it('takes the interface language it is given over the locale of the extension', async () => {
+    const { fetch } = stubWorker();
+    const usage = newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: 'identified',
+      getId: () => USER_ID,
+      uiLanguage: 'fr-CA',
+    });
+
+    await usage.setState('identified');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.ui_language).toBe('fr-CA');
+  });
+
+  it('takes the version it is given over the manifest one, and reads no manifest for it', async () => {
+    const { chrome, fetch } = stubWorker();
+    chrome.runtime.getManifest = () => {
+      throw new Error('getManifest not implemented');
+    };
+    const usage = newExtensionCollector({ key: KEY, version: '3.1.0-beta.2', endpoint: ENDPOINT, mode: 'anonymous' });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.version).toBe('3.1.0-beta.2');
+  });
+
+  it('takes the manifest version and chrome.storage.local for a version and a storage given as undefined', async () => {
+    const { chrome, fetch } = stubWorker();
+    const usage = newExtensionCollector({
+      key: KEY,
+      version: undefined,
+      storage: undefined,
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+    });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.version).toBe('3.1.0');
+    expect(chrome.items.size).toBeGreaterThan(0);
+  });
+
+  it('keeps platform extension when the options carry another platform, which their type leaves out', async () => {
+    const { fetch } = stubWorker();
+    const desktop = { platform: 'macos' } as const;
+    const usage = newExtensionCollector({ ...desktop, key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.platform).toBe('extension');
+  });
+});
+
+describe('the access level of chrome.storage.local', () => {
+  /** Makes a collector of an extension page or worker, and returns the fake Chrome and what reached onError. */
+  function newCollectorIn(chrome: FakeChrome): { chrome: FakeChrome; errors: Error[] } {
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const errors: Error[] = [];
+    newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous', onError: (error) => errors.push(error) });
+    return { chrome, errors };
+  }
+
+  it('closes it to content scripts in the service worker', async () => {
+    stubServiceWorker();
+    const { chrome, errors } = newCollectorIn(stubChrome());
+    await Promise.resolve();
+
+    expect(chrome.accessLevels).toEqual([{ accessLevel: 'TRUSTED_CONTEXTS' }]);
+    expect(errors).toEqual([]);
+  });
+
+  it('reads and writes no storage in the service worker until Chrome has set the level', async () => {
+    stubServiceWorker();
+    const chrome = stubChrome();
+    let setLevel: () => void = () => undefined;
+    chrome.storage.local.setAccessLevel = () =>
+      new Promise<void>((resolve) => {
+        setLevel = resolve;
+      });
+    const reads: string[] = [];
+    const get = chrome.storage.local.get;
+    chrome.storage.local.get = async (key) => {
+      reads.push(key);
+      return get(key);
+    };
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const collector = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+
+    const tracked = collector.track('a');
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    const readsBefore = reads.length;
+    setLevel();
+    await tracked;
+
+    expect([readsBefore, reads.length > 0, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([0, true, true]);
+  });
+
+  it('reads a storage the product gives no sooner in the service worker than Chrome has set the level', async () => {
+    stubServiceWorker();
+    const chrome = stubChrome();
+    let setLevel: () => void = () => undefined;
+    chrome.storage.local.setAccessLevel = () =>
+      new Promise<void>((resolve) => {
+        setLevel = resolve;
+      });
+    const items = new Map<string, string>();
+    const reads: string[] = [];
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const collector = newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      storage: {
+        get: async (key) => {
+          reads.push(key);
+          return items.get(key);
+        },
+        set: async (key, value) => {
+          items.set(key, value);
+        },
       },
-    ],
-  ])('ignores a message with %s', async (_, message) => {
+    });
+
+    const tracked = collector.track('a');
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    const readsBefore = reads.length;
+    setLevel();
+    await tracked;
+
+    expect([readsBefore, reads.length > 0]).toEqual([0, true]);
+  });
+
+  it('leaves it as it is in an extension page, which may not set it', () => {
+    const { chrome, errors } = newCollectorIn(stubChrome());
+
+    expect(chrome.accessLevels).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('reports a call that rejects to onError, throws nothing, and still records', async () => {
+    stubServiceWorker();
     const chrome = stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
+    chrome.storage.local.setAccessLevel = async () => {
+      throw new Error('not allowed');
+    };
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const errors: Error[] = [];
 
-    await chrome.runtime.sendMessage(message);
-    await harness.settle();
+    await newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: 'anonymous',
+      onError: (error) => errors.push(error),
+    }).track('a');
 
-    expect(harness.fetch.requests).toHaveLength(0);
+    expect([errors, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([[new Error('not allowed')], true]);
   });
 
-  it('tracks a forwarded event at the limits of a product event list', async () => {
-    stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
-    const params = Object.fromEntries(Array.from({ length: 15 }, (_, index) => [`p${index}`, index]));
-    // The test uses 64 characters outside the basic plane, 128 UTF-16 units. The intake counts characters, so this
-    // string is still at its limit.
-    const text = '😀'.repeat(64);
-
-    await forwardTrack('a'.repeat(40), { ...params, ['q'.repeat(40)]: text });
-    await harness.settle();
-
-    expect(harness.fetch.events.map((event) => event.params?.['q'.repeat(40)])).toEqual([text]);
-  });
-
-  it('tracks at most 60 forwarded events a minute, however many contexts forward them', async () => {
-    const { harness } = startForwarding();
-
-    await forwardOneByOne({ times: 61, name: 'a' });
-    harness.clock.jumpMinutes(1);
-    await forwardTrack('b');
-    await harness.settle();
-
-    expect(timesTracked(harness, 'a')).toBe(60);
-    expect(timesTracked(harness, 'b')).toBe(1);
-  });
-
-  it('keeps the budget spent for the whole minute', async () => {
-    const { harness } = startForwarding();
-
-    await forwardOneByOne({ times: 60, name: 'a' });
-    harness.clock.jumpMinutes(59 / 60);
-    await forwardTrack('b');
-    await harness.settle();
-
-    expect(timesTracked(harness, 'b')).toBe(0);
-  });
-
-  it('spends no budget on a message it refuses', async () => {
-    const { chrome, harness } = startForwarding();
-
-    await forwardTrack('a');
-    for (let index = 0; index < 60; index++) {
-      await forwardTrack('usage_counts_off');
-      await chrome.runtime.sendMessage({ type: 'artel.track', name: 'a' }, FROM_OTHER_EXTENSION);
-    }
-    await forwardTrack('b');
-    await harness.settle();
-
-    expect(harness.fetch.eventNames).toEqual(['a', 'b']);
-  });
-
-  it('keeps the budget spent when the worker restarts within the minute', async () => {
-    const { harness, stop } = startForwarding();
-    await forwardOneByOne({ times: 60, name: 'a' });
-    await harness.clock.advance(0);
-    stop();
-
-    acceptForwarded(harness.restart(), { clock: harness.clock });
-    await forwardTrack('b');
-    await harness.settle();
-
-    expect(timesTracked(harness, 'b')).toBe(0);
-  });
-
-  it.each([
-    // Small events meet the count first. Large ones, 1220 bytes each, meet the bytes after 49.
-    ['count', { tracked: -1e12, bytes: 0 }, {}, 60],
-    [
-      'bytes',
-      { tracked: 0, bytes: -1e12 },
-      Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`p${i}`, 'x'.repeat(64)])),
-      49,
-    ],
-  ])('starts an empty budget over a stored budget whose %s is out of range', async (_, counts, params, tracked) => {
+  it('reports a Chrome without setAccessLevel to onError, and throws nothing', () => {
+    stubServiceWorker();
     const chrome = stubChrome();
-    const harness = newHarness();
-    chrome.sessionItems.set('artel.forwardBudget', { minuteStart: harness.clock.now(), ...counts });
-    acceptForwarded(harness.collector, { clock: harness.clock });
-    const name = 'a'.repeat(40);
+    Reflect.deleteProperty(chrome.storage.local, 'setAccessLevel');
 
-    await forwardOneByOne({ times: 400, name, params });
-    await harness.clock.advance(60_000);
+    const { errors } = newCollectorIn(chrome);
 
-    expect(harness.fetch.eventNames).toHaveLength(tracked);
+    expect(errors).toEqual([expect.any(Error)]);
   });
 
-  it('holds at most 120 forwarded events waiting for the budget', () => {
-    startForwarding();
-    const encode = vi.spyOn(TextEncoder.prototype, 'encode');
-
-    forwardAllAtOnce(1000, 'a');
-
-    // The worker sizes each event it lets wait, before anything else runs.
-    expect(encode).toHaveBeenCalledTimes(120);
-    encode.mockRestore();
-  });
-
-  it('takes new forwarded events once the waiting ones had their turn', async () => {
-    const { harness } = startForwarding();
-    forwardAllAtOnce(1000, 'a');
-    await harness.clock.advance(0);
-
-    harness.clock.jumpMinutes(1);
-    forwardAllAtOnce(120, 'b');
-    await harness.settle();
-
-    expect(timesTracked(harness, 'b')).toBe(60);
-  });
-
-  it('keeps the budget in memory without session storage', async () => {
+  it('names the missing setAccessLevel in what it reports', () => {
+    stubServiceWorker();
     const chrome = stubChrome();
-    Reflect.deleteProperty(chrome.storage, 'session');
-    const harness = newHarness();
-    acceptForwarded(harness.collector, { clock: harness.clock });
+    Reflect.deleteProperty(chrome.storage.local, 'setAccessLevel');
 
-    await forwardOneByOne({ times: 61, name: 'a' });
-    await harness.settle();
+    const { errors } = newCollectorIn(chrome);
 
-    expect(harness.fetch.eventNames).toHaveLength(60);
-  });
-
-  it('starts a new minute when the clock is set back', async () => {
-    const { harness } = startForwarding();
-
-    await forwardOneByOne({ times: 60, name: 'a' });
-    harness.clock.jumpMinutes(-60);
-    await forwardTrack('b');
-    await harness.settle();
-
-    expect(timesTracked(harness, 'b')).toBe(1);
-  });
-
-  it('tracks at most 60 kB of forwarded names and params a minute', async () => {
-    const { harness } = startForwarding();
-    // 16 params of 64 characters past the basic plane, 4255 bytes an event, so 14 fit in 60 kB.
-    const params = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`p${index}`, '😀'.repeat(64)]));
-
-    await forwardOneByOne({ times: 20, name: 'big', params });
-    await harness.clock.advance(60_000);
-
-    expect(harness.fetch.eventNames).toHaveLength(14);
-  });
-
-  it('ignores a message from another extension', async () => {
-    const chrome = stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
-
-    await chrome.runtime.sendMessage({ type: 'artel.track', name: 'a' }, FROM_OTHER_EXTENSION);
-    await harness.settle();
-
-    expect(harness.fetch.requests).toHaveLength(0);
-  });
-
-  it('resolves in the content script when the worker cannot be reached', async () => {
-    stubChrome().isWorkerGone = true;
-
-    await expect(forwardTrack('link_shared')).resolves.toBeUndefined();
+    expect(errors).toEqual([
+      new TypeError('artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it'),
+    ]);
   });
 });
 
@@ -337,9 +298,79 @@ describe('refreshUninstallUrl', () => {
       product: 'demo',
       platform: 'extension',
       version: '4.2.0',
-      lang: 'en',
-      age: '0',
-      days: '0',
+      browser_language: 'pt',
+      ui_language: 'zh',
+      age_days: '0',
+      active_days: '0',
     });
+  });
+
+  it('sets the uninstall page without a query of its own in the opted_out state', async () => {
+    const chrome = stubChrome();
+    const harness = newHarness({ state: AnalyticsState.OptedOut });
+
+    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall');
+
+    expect(chrome.uninstallUrl).toBe('https://example.com/uninstall');
+  });
+
+  it('reports a failure to onError and resolves', async () => {
+    stubChrome();
+    const harness = newHarness();
+    const errors: Error[] = [];
+
+    await expect(
+      refreshUninstallUrl(harness.collector, 'not a url', { onError: (error) => errors.push(error) }),
+    ).resolves.toBeUndefined();
+
+    expect(errors).toHaveLength(1);
+  });
+
+  it('reports a failure that is not an Error as an Error', async () => {
+    const chrome = stubChrome();
+    chrome.runtime.setUninstallURL = async () => {
+      throw fromUntypedHost<Error>('quota');
+    };
+    const harness = newHarness();
+    const errors: Error[] = [];
+
+    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall', {
+      onError: (error) => errors.push(error),
+    });
+
+    expect(errors).toEqual([new Error('quota')]);
+  });
+
+  it('resolves when its own onError throws', async () => {
+    stubChrome();
+    const harness = newHarness();
+
+    await expect(
+      refreshUninstallUrl(harness.collector, 'not a url', {
+        onError: () => {
+          throw new Error('handler');
+        },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('sets pageUrl alone when uninstallParams fails, which only the collector reports', async () => {
+    const chrome = stubChrome();
+    const harness = newHarness({
+      storage: {
+        get: async () => {
+          throw new Error('storage down');
+        },
+        set: async () => undefined,
+      },
+    });
+    const errors: Error[] = [];
+
+    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall', {
+      onError: (error) => errors.push(error),
+    });
+
+    expect(chrome.uninstallUrl).toBe('https://example.com/uninstall');
+    expect([harness.errors, errors]).toEqual([[new Error('storage down')], []]);
   });
 });

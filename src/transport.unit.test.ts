@@ -11,7 +11,7 @@ describe('newHttpTransport', () => {
       },
     });
 
-    await expect(transport('{}')).resolves.toBe(0);
+    await expect(transport('{}')).resolves.toEqual({ status: 0 });
   });
 
   it('sends no cookies and no referrer, so neither a session nor a page address reaches the intake', async () => {
@@ -43,7 +43,7 @@ describe('newHttpTransport', () => {
     const status = transport('{}');
     await clock.advance(30_000);
 
-    await expect(status).resolves.toBe(0);
+    await expect(status).resolves.toEqual({ status: 0 });
   });
 
   it('calls the global fetch through its global, as a browser requires, when the host gives none', async () => {
@@ -53,12 +53,20 @@ describe('newHttpTransport', () => {
         : Promise.reject(new TypeError('Illegal invocation'));
     });
 
-    await expect(newHttpTransport(ENDPOINT)('{}')).resolves.toBe(204);
+    await expect(newHttpTransport(ENDPOINT)('{}')).resolves.toEqual({ status: 204 });
   });
 
   it('resolves to the status the intake answered', async () => {
     const transport = newHttpTransport(ENDPOINT, { fetch: async () => new Response(undefined, { status: 403 }) });
 
-    await expect(transport('{}')).resolves.toBe(403);
+    await expect(transport('{}')).resolves.toStrictEqual({ status: 403 });
+  });
+
+  it('passes up the Retry-After the intake sent, as it came', async () => {
+    const transport = newHttpTransport(ENDPOINT, {
+      fetch: async () => new Response(undefined, { status: 429, headers: { 'Retry-After': '7' } }),
+    });
+
+    await expect(transport('{}')).resolves.toEqual({ status: 429, retryAfter: '7' });
   });
 });
