@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AnalyticsState, Mode, Platform } from './exports.js';
-import { newHarness, storageKey, USER_ID } from '../tests/harness.js';
+import { AnalyticsState, Mode, newMemoryStorage, Platform, type StorageAdapter } from './exports.js';
+import { newHarness, STATE_KEY, storageKey, USER_ID } from '../tests/harness.js';
 import { fromUntypedHost } from '../tests/untypedHost.js';
 
 const INSTALL_ID_KEY = storageKey('install_id');
@@ -184,5 +184,98 @@ describe('a change between the pseudonymous and the identified state', () => {
 
     expect(harness.fetch.requests.at(-1)?.envelope).toMatchObject({ id: USER_ID, id_kind: 'identified' });
     expect(harness.fetch.eventNames).toEqual(['pseudonymous', 'waiting']);
+  });
+});
+
+/**
+ * Returns a harness over a storage whose writes of `failingKey` fail while `isStopping` is set, as when the host stops
+ * at that write: nothing after it in the same call runs. The user starts in `state`.
+ */
+async function newStoppingHarness({
+  failingKey,
+  state,
+  ...overrides
+}: Parameters<typeof newHarness>[0] & { failingKey: string; state: AnalyticsState }) {
+  const memory = newMemoryStorage();
+  const control = { isStopping: false };
+  const storage: StorageAdapter = {
+    get: (name) => memory.get(name),
+    set: (name, value) =>
+      name === failingKey && control.isStopping ? Promise.reject(new Error('host stopped')) : memory.set(name, value),
+  };
+  await storage.set(STATE_KEY, state);
+  return { harness: newHarness({ ...overrides, storage, state: undefined }), storage, control };
+}
+
+describe('a run that stops while it switches between the pseudonymous and the identified state', () => {
+  it('has forgotten the account id, and sends nothing under it on the next run', async () => {
+    const { harness, control } = await newStoppingHarness({
+      getId: () => USER_ID,
+      failingKey: STATE_KEY,
+      state: AnalyticsState.Identified,
+    });
+    await harness.collector.track('a');
+    control.isStopping = true;
+
+    await harness.collector.setState(AnalyticsState.Pseudonymous);
+    control.isStopping = false;
+    await harness.restart().flush();
+    await harness.settle();
+
+    expect(harness.fetch.requests.map((request) => request.envelope.id)).not.toContain(USER_ID);
+    expect(harness.fetch.forgets.map((forget) => forget.id)).toEqual([USER_ID]);
+  });
+
+  it('has forgotten the install id, and the next run sends under a new one', async () => {
+    const { harness, control } = await newStoppingHarness({
+      getId: () => USER_ID,
+      failingKey: STATE_KEY,
+      state: AnalyticsState.Pseudonymous,
+    });
+    await harness.collector.track('a');
+    await harness.settle();
+    const installId = harness.fetch.requests[0]?.envelope.id;
+    control.isStopping = true;
+
+    await harness.collector.setState(AnalyticsState.Identified);
+    control.isStopping = false;
+    await harness.restart().track('b');
+    await harness.settle();
+
+    expect(installId).toMatch(INSTALL_ID);
+    expect(harness.fetch.forgets.map((forget) => forget.id)).toEqual([installId]);
+    expect(harness.fetch.requests[1]?.envelope.id).not.toBe(installId);
+  });
+
+  it('never seals an event that waited for the account id under the install id', async () => {
+    const { harness, control } = await newStoppingHarness({
+      getId: () => undefined,
+      // The first write after the state is the queue's, which drops the waiting event.
+      failingKey: storageKey('queue'),
+      state: AnalyticsState.Identified,
+    });
+    await harness.collector.track('waiting');
+    control.isStopping = true;
+
+    await harness.collector.setState(AnalyticsState.Pseudonymous);
+    control.isStopping = false;
+    await harness.restart().flush();
+    await harness.settle();
+
+    expect(harness.fetch.requests).toEqual([]);
+  });
+
+  it('deletes the install id even when it stops before it clears the last id', async () => {
+    const { harness, storage, control } = await newStoppingHarness({
+      mode: Mode.Pseudonymous,
+      failingKey: storageKey('last_id'),
+      state: AnalyticsState.Pseudonymous,
+    });
+    await harness.collector.track('a');
+    control.isStopping = true;
+
+    await harness.collector.setState(AnalyticsState.Anonymous);
+
+    expect(await storage.get(INSTALL_ID_KEY)).toBe('');
   });
 });

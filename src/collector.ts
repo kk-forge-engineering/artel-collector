@@ -145,8 +145,29 @@ export function newCollector(options: CollectorOptions): Collector {
       await giveBack(await outbox.forget(last));
     }
     await giveBack(await outbox.discardIdentified());
-    await install.setLastId('');
+    // The install id goes before the last id. A run that stops between them then keeps the last id, and the next run
+    // leaves it again.
     await install.dropInstallId();
+    await install.setLastId('');
+  }
+
+  /**
+   * Stores `next` and leaves the id of `previous`, and resolves to whether `previous` had one. A change between the two
+   * states with an id leaves first. A run that stops in between keeps the old state with its id forgotten, so no event
+   * goes under the other state's id. Any other change stores first, so an opt-out stays, and the next run leaves the id
+   * the stored state no longer has.
+   */
+  async function storeState(previous: AnalyticsState, next: AnalyticsState): Promise<boolean> {
+    const hadId = fieldsIn(previous).idKind !== undefined;
+    const isSwitch = hadId && fieldsIn(next).idKind !== undefined;
+    if (isSwitch) {
+      await leaveIdentity();
+    }
+    await install.setState(next);
+    if (hadId && !isSwitch) {
+      await leaveIdentity();
+    }
+    return hadId;
   }
 
   /** Drops what was not sent, except an `opted_out`. */
@@ -328,13 +349,7 @@ export function newCollector(options: CollectorOptions): Collector {
         if (previous === next) {
           return false;
         }
-        // The state goes first. A failure after it leaves the user opted out or without an id, and the next run
-        // finishes the change.
-        await install.setState(next);
-        const hadId = fieldsIn(previous).idKind !== undefined;
-        if (hadId) {
-          await leaveIdentity();
-        }
+        const hadId = await storeState(previous, next);
         if (next === AnalyticsState.OptedOut) {
           // Events from before the opt-out that have not gone yet never go.
           await discardForOptOut();
