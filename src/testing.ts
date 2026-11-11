@@ -19,17 +19,17 @@ export type RecordingCollector<M extends Mode = Mode> = Collector<M> & {
 };
 
 /**
- * Returns a collector of channel mode `mode`, `identified` by default, that sends nothing and records each event the
+ * Returns a collector of channel mode `mode`, `anonymous` by default, that sends nothing and records each event the
  * real collector would send. Its user starts in the anonymous state. It refuses an event `track` refuses, a state above
  * the mode and an id `forget` refuses, with the same report to `onError`. It records `opted_out` at the opt-out, and
  * nothing in the opted_out state. It keeps one version: `installed` records once, and `updated` only while neither of
  * them recorded. `uninstallParams` resolves to undefined.
  */
-export function newRecordingCollector<M extends Mode = typeof Mode.Identified>(
+export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
   mode?: M,
   { onError }: { onError?: (error: Error) => void } = {},
 ): RecordingCollector<M> {
-  const channelMode: Mode = mode ?? Mode.Identified;
+  const channelMode: Mode = mode ?? Mode.Anonymous;
   const reportError = (error: unknown): void => reportTo(onError, error);
   const events: RecordedEvent[] = [];
   let state: AnalyticsState = AnalyticsState.Anonymous;

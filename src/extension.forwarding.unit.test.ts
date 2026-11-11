@@ -84,6 +84,22 @@ describe('forwarding from a content script', () => {
     expect(timesTracked(harness, 'b')).toBe(1);
   });
 
+  it('reports the first forwarded event it drops in each minute, and no more of that minute', async () => {
+    const { harness } = startForwarding();
+    const report = new Error('artel: the worker tracks at most 60 forwarded events a minute, so it dropped the rest');
+
+    for (let index = 0; index < 62; index++) {
+      await forwardTrack('a');
+    }
+    expect(harness.errors).toEqual([report]);
+    harness.clock.jumpMinutes(1);
+    for (let index = 0; index < 61; index++) {
+      await forwardTrack('b');
+    }
+
+    expect(harness.errors).toEqual([report, report]);
+  });
+
   it('starts a new minute when the clock is set back an hour', async () => {
     const { harness } = startForwarding();
 
@@ -175,13 +191,13 @@ describe('newContentScriptCollector', () => {
     ]);
   });
 
-  it('sends nothing of its own on flush and touches no storage', async () => {
+  it('has track alone and touches no storage', async () => {
     const { chrome, harness } = startForwarding();
 
-    await newContentScriptCollector().flush();
+    const collector = newContentScriptCollector();
     await harness.settle();
 
-    expect([harness.fetch.requests, chrome.items.size]).toEqual([[], 0]);
+    expect([Object.keys(collector), harness.fetch.requests, chrome.items.size]).toEqual([['track'], [], 0]);
   });
 
   it('throws nothing outside an extension or with no worker', async () => {

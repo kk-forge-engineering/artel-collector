@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { newExtensionCollector } from '../src/extension.js';
-import { newHttpTransport, newMemoryStorage, type Collector, type StorageAdapter } from '../src/exports.js';
+import { Mode, newHttpTransport, newMemoryStorage, type Collector, type StorageAdapter } from '../src/exports.js';
 import { FakeClock } from './fakeClock.js';
 import { FakeFetch } from './fakeFetch.js';
 import { ENDPOINT, KEY, RETRY_DELAY_MS, SEND_DELAY_MS } from './harness.js';
@@ -101,11 +101,14 @@ export interface ExtensionHarness {
  */
 export function newExtensionHarness({
   isWorker,
+  mode = Mode.Anonymous,
   uninstallPage,
   version,
   storage = newMemoryStorage(),
 }: {
   isWorker: boolean;
+  /** The channel mode, anonymous by default. A mode without `getId`, since the harness passes none. */
+  mode?: typeof Mode.Anonymous | typeof Mode.Pseudonymous;
   uninstallPage?: string;
   /** The product version, the fake manifest's `3.1.0` by default. */
   version?: string;
@@ -121,7 +124,7 @@ export function newExtensionHarness({
   const errors: Error[] = [];
   const collector = newExtensionCollector({
     key: KEY,
-    mode: 'anonymous',
+    mode,
     storage,
     clock,
     transport: newHttpTransport(ENDPOINT, { fetch: fetch.fetch, clock }),

@@ -76,7 +76,7 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
       : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
   const collector = withUninstallPage(built, options.uninstallPage, options.onError);
   if (isWorker) {
-    listenAsWorker(collector, options.clock ?? systemClock);
+    listenAsWorker(collector, options.clock ?? systemClock, options.onError);
     return collector;
   }
   // An extension page is hidden as a tab is. The service worker has no page.
@@ -88,7 +88,7 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
  * an empty `onStartup` listener. Chrome starts a worker with an `onStartup` listener when the browser starts, so the
  * access level is set again before any page or content script runs.
  */
-function listenAsWorker(collector: Collector, clock: Clock): void {
+function listenAsWorker(collector: Collector, clock: Clock, onError: ((error: Error) => void) | undefined): void {
   const { runtime } = chromeApi();
   runtime.onInstalled.addListener(({ reason }) => {
     if (reason === 'install') {
@@ -98,7 +98,7 @@ function listenAsWorker(collector: Collector, clock: Clock): void {
     }
   });
   runtime.onStartup.addListener(() => undefined);
-  acceptForwarded(collector, clock);
+  acceptForwarded(collector, clock, onError);
 }
 
 /**
@@ -113,15 +113,32 @@ function withUninstallPage(
   if (pageUrl === undefined) {
     return collector;
   }
-  const refresh = async (): Promise<void> => setUninstallUrl(pageUrl, await collector.uninstallParams(), onError);
+  // Every write of this context goes in turn on one chain. A write that started before the latest `setState` is
+  // dropped, so a slow refresh never puts back the fields of a state the user has left.
+  let writes = Promise.resolve();
+  let changes = 0;
+  const write = (params: () => Promise<UninstallParams | undefined>): Promise<void> => {
+    const startedAt = changes;
+    const earlier = writes;
+    writes = (async () => {
+      await earlier;
+      const fields = await params();
+      if (startedAt === changes) {
+        await setUninstallUrl(pageUrl, fields, onError);
+      }
+    })();
+    return writes;
+  };
+  const refresh = (): Promise<void> => write(() => collector.uninstallParams());
   void refresh();
   return {
     ...collector,
     setState: async (state) => {
-      if (state === AnalyticsState.OptedOut) {
-        // The opted_out send can take 30 seconds or more, and the page must not carry the earlier state's fields
-        // meanwhile. The opted_out state's page carries none.
-        await setUninstallUrl(pageUrl, undefined, onError);
+      changes++;
+      if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
+        // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the page
+        // must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
+        await write(async () => undefined);
       }
       await collector.setState(state);
       await refresh();
@@ -194,24 +211,24 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
 }
 
 /** The part of the collector a content script uses: it tracks events, and the worker keeps the user's choice. */
-export type ContentScriptCollector = Pick<Collector, 'track' | 'flush'>;
+export type ContentScriptCollector = Pick<Collector, 'track'>;
 
 /**
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
- * and the worker's collector checks, queues and sends it under the user's choice, so `flush` does nothing here. The
- * user's choice lives in the worker and the extension pages, so a content script can neither read nor change it. It
+ * and the worker's collector checks, queues and sends it under the user's choice. The user's choice lives in the worker and the extension pages, so a content script can neither read nor change it. It
  * reads no storage, needs no key, version or endpoint, and never throws.
  */
 export function newContentScriptCollector(): ContentScriptCollector {
-  return { track: forwardTrack, flush: async () => undefined };
+  return { track: forwardTrack };
 }
 
 /**
  * Tracks the events content scripts forward with `forwardTrack`, at most 60 a minute. It takes them only from this
  * extension, and only the product's own events: never a system event of the intake, such as `installed` or
- * `uninstalled`, which a content script has no reason to send.
+ * `uninstalled`, which a content script has no reason to send. The limit guards the queue against a flood, and the
+ * first event it drops in a minute goes to `onError`, so the drop is not silent.
  */
-function acceptForwarded(collector: Collector, clock: Clock): void {
+function acceptForwarded(collector: Collector, clock: Clock, onError: ((error: Error) => void) | undefined): void {
   let minuteStart = Number.NEGATIVE_INFINITY;
   let tracked = 0;
   const onMessage: MessageListener = (message, sender) => {
@@ -225,9 +242,16 @@ function acceptForwarded(collector: Collector, clock: Clock): void {
       tracked = 0;
     }
     if (tracked < FORWARDS_PER_MINUTE) {
-      tracked++;
       void collector.track(message.name, message.params);
+    } else if (tracked === FORWARDS_PER_MINUTE) {
+      reportTo(
+        onError,
+        new Error(
+          `artel: the worker tracks at most ${FORWARDS_PER_MINUTE} forwarded events a minute, so it dropped the rest`,
+        ),
+      );
     }
+    tracked++;
     return undefined;
   };
   chromeApi().runtime.onMessage.addListener(onMessage);

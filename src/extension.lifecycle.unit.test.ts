@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AnalyticsState, newMemoryStorage } from './exports.js';
+import { AnalyticsState, Mode, newMemoryStorage } from './exports.js';
 import { newExtensionCollector } from './extension.js';
 import { newExtensionHarness, stubChrome } from '../tests/fakeChrome.js';
 import { FakeClock } from '../tests/fakeClock.js';
@@ -107,6 +107,58 @@ describe('uninstallPage', () => {
     expect(new URL(chrome.uninstallUrl).searchParams.get('age_days')).toBe('0');
   });
 
+  it('keeps the earlier state fields out of the page during an opt-out right after construction', async () => {
+    const chrome = stubChrome();
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    let answer: ((status: number) => void) | undefined;
+    const collector = newExtensionCollector({
+      key: KEY,
+      mode: 'anonymous',
+      storage: newMemoryStorage(),
+      clock: new FakeClock('2026-10-29T10:00:00'),
+      transport: () => new Promise<number>((resolve) => (answer = resolve)),
+      uninstallPage: UNINSTALL_PAGE,
+    });
+
+    const optingOut = collector.setState(AnalyticsState.OptedOut);
+    await expect.poll(() => answer).toBeDefined();
+    const urlWhileSending = chrome.uninstallUrl;
+    answer?.(204);
+    await optingOut;
+
+    expect([urlWhileSending, chrome.uninstallUrl]).toEqual([UNINSTALL_PAGE, UNINSTALL_PAGE]);
+  });
+
+  it('sets the page alone before any move to a state without an id, then the new fields', async () => {
+    const { chrome, collector } = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
+    await collector.setState(AnalyticsState.OptedOut);
+    const urls: string[] = [];
+    const setUninstallUrl = chrome.runtime.setUninstallURL;
+    chrome.runtime.setUninstallURL = async (url) => {
+      urls.push(url);
+      await setUninstallUrl(url);
+    };
+
+    await collector.setState(AnalyticsState.Anonymous);
+
+    expect(urls.map((url) => new URL(url).searchParams.has('age_days'))).toEqual([false, true]);
+  });
+
+  it('keeps the fields in the page while the user moves to a state with an id', async () => {
+    const { chrome, collector } = newExtensionHarness({
+      isWorker: false,
+      mode: Mode.Pseudonymous,
+      uninstallPage: UNINSTALL_PAGE,
+    });
+    await expect.poll(() => chrome.uninstallUrl).toContain('age_days');
+    const urls: string[] = [];
+    chrome.runtime.setUninstallURL = async (url) => void urls.push(url);
+
+    await collector.setState(AnalyticsState.Pseudonymous);
+
+    expect(urls.map((url) => new URL(url).searchParams.has('age_days'))).toEqual([true]);
+  });
+
   it('sets no uninstall page without the option', async () => {
     const { chrome, collector } = newExtensionHarness({ isWorker: true });
 
@@ -120,8 +172,8 @@ describe('uninstallPage', () => {
 
     await collector.setState(AnalyticsState.OptedOut);
 
-    // The page goes at construction, before the opt-out and after it.
-    expect(errors).toHaveLength(3);
+    // The page goes before the opt-out and after it. The opt-out drops the write of the construction.
+    expect(errors).toHaveLength(2);
     expect(errors.every((error) => error instanceof TypeError)).toBe(true);
   });
 

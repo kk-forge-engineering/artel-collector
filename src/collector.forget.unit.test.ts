@@ -120,8 +120,43 @@ describe('forget(id)', () => {
   });
 });
 
+describe('a forget with a test key', () => {
+  it('drops the id and its events here, and asks the intake nothing, since it answers a test key 403', async () => {
+    const harness = newHarness({ getId: () => USER_ID, key: 'extension-test-aa131n3j11' });
+    await harness.collector.track('a');
+
+    await harness.collector.forget(USER_ID);
+    await harness.settle();
+
+    expect([harness.fetch.forgets, harness.fetch.requests, harness.errors]).toEqual([[], [], []]);
+    expect(await harness.storage.get(storageKey('last_id', 'extension-test-aa131n3j11'))).not.toBe(USER_ID);
+  });
+});
+
+describe('the stored forget requests', () => {
+  it('stores the id alone, and sends it with the channel key of the collector', async () => {
+    const harness = newHarness({ getId: () => USER_ID });
+    harness.fetch.failNextWithNetworkError();
+
+    await harness.collector.forget(USER_ID);
+
+    expect(await harness.storage.get(storageKey('forgets'))).toBe(JSON.stringify([USER_ID]));
+  });
+
+  it('sends a planted entry only as an id under its own key, and skips one the intake would refuse', async () => {
+    const harness = newHarness();
+    const planted = '{"key":"site-zz131n3j11","id":"victim"}';
+    await harness.storage.set(storageKey('forgets'), JSON.stringify(['x'.repeat(65), planted]));
+
+    await harness.collector.flush();
+
+    expect(harness.fetch.forgets).toEqual([{ url: FORGET_URL, key: KEY, id: planted }]);
+    expect(await harness.storage.get(storageKey('forgets'))).toBe('[]');
+  });
+});
+
 describe('the answer to a forget', () => {
-  it('reports a 403, which a test key gets, once and never sends it again', async () => {
+  it('reports a 403 once and never sends it again', async () => {
     const harness = newHarness({ getId: () => USER_ID });
     harness.fetch.respondNextWith(403);
 

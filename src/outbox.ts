@@ -1,7 +1,7 @@
 import type { Clock, TimerHandle } from './clock.js';
 import { daysBetween, parseDay, utcDateAt, type CalendarDate } from './calendar.js';
 import type { Envelope, UsageEvent } from './envelope.js';
-import { quoted } from './hostInput.js';
+import { isTestKey, isUsableId, quoted } from './hostInput.js';
 import type { Lock } from './lock.js';
 import {
   newQueue,
@@ -56,8 +56,8 @@ interface Outbox {
    */
   discard(): Promise<QueuedEnvelope[]>;
   /**
-   * Drops the envelopes of this id and stores the request that asks the intake to delete the id's events. Resolves to
-   * all of them, since the intake deletes their events too.
+   * Drops the envelopes of this id and stores the request that asks the intake to delete the id's events, except with
+   * a test key. Resolves to all of them, since the intake deletes their events too.
    */
   forget(id: string): Promise<QueuedEnvelope[]>;
   /** Drops the envelopes that name a user or that await an id. Resolves to those whose marks may go back. */
@@ -249,12 +249,17 @@ export function newOutbox({
 
   /**
    * Sends the stored forget requests, and resolves to whether the intake answered each one. Another context may send
-   * the same request at once, which deletes nothing more.
+   * the same request at once, which deletes nothing more. The body names this collector's own key, and an id the
+   * intake would refuse is dropped unsent: any script of the origin can write the stored ids.
    */
-  async function sendForgets(bodies: readonly string[]): Promise<boolean> {
-    for (const body of bodies) {
+  async function sendForgets(ids: readonly string[]): Promise<boolean> {
+    for (const id of ids) {
+      if (!isUsableId(id)) {
+        await lock(async () => queue.removeForget(id));
+        continue;
+      }
       const { isSettled, askedWaitMs } = await deliver({
-        body,
+        body: JSON.stringify({ key, id }),
         transport: forgetTransport,
         what: 'a forget',
         reportError,
@@ -264,7 +269,7 @@ export function newOutbox({
         await waitForRetry(askedWaitMs);
         return false;
       }
-      await lock(async () => queue.removeForget(body));
+      await lock(async () => queue.removeForget(id));
     }
     return true;
   }
@@ -317,7 +322,10 @@ export function newOutbox({
     // again.
     discard: () => queue.removeAllButOptOuts(),
     forget: async (id) => {
-      await queue.addForget(JSON.stringify({ key, id }));
+      // The intake answers a forget with a test key 403, since it would delete the user's live events too.
+      if (!isTestKey(key)) {
+        await queue.addForget(id);
+      }
       return queue.removeId(id);
     },
     discardIdentified: () => queue.removeIdentified(),

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { AnalyticsState, Mode } from './exports.js';
-import { newRecordingCollector, queuedEvents } from './testing.js';
+import { newRecordingCollector, queuedEvents, type RecordingCollector } from './testing.js';
 import { KEY, newHarness, QUEUE_KEY } from '../tests/harness.js';
 import { fromUntypedHost } from '../tests/untypedHost.js';
 
@@ -51,6 +51,16 @@ describe('newRecordingCollector', () => {
     expect(await recording.getState()).toBe('opted_out');
   });
 
+  it('records again once the user leaves the opted_out state', async () => {
+    const collector = newRecordingCollector();
+    await collector.setState(AnalyticsState.OptedOut);
+
+    await collector.setState(AnalyticsState.Anonymous);
+    await collector.track('a');
+
+    expect(collector.events.map((event) => event.name)).toEqual(['opted_out', 'a']);
+  });
+
   it('refuses to forget an id the intake refuses, with the same report', async () => {
     const errors: Error[] = [];
     const collector = newRecordingCollector(Mode.Anonymous, { onError: (error) => errors.push(error) });
@@ -89,12 +99,15 @@ describe('newRecordingCollector', () => {
     expect(errors).toEqual([new TypeError('artel: a channel of mode "anonymous" takes no state "pseudonymous"')]);
   });
 
-  it('takes every state by default', async () => {
-    const collector = newRecordingCollector();
+  it('is of an anonymous channel by default, as every product today is', async () => {
+    const errors: Error[] = [];
+    const collector = newRecordingCollector(undefined, { onError: (error) => errors.push(error) });
 
-    await collector.setState(AnalyticsState.Identified);
+    await collector.setState(fromUntypedHost(AnalyticsState.Pseudonymous));
 
-    expect(await collector.getState()).toBe('identified');
+    expect(await collector.getState()).toBe('anonymous');
+    expect(errors).toHaveLength(1);
+    expectTypeOf(newRecordingCollector()).toEqualTypeOf<RecordingCollector<'anonymous'>>();
   });
 });
 

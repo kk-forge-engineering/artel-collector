@@ -2,7 +2,7 @@ import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from './e
 import type { StorageAdapter } from './storage.js';
 
 export const QUEUE_KEY = 'queue';
-/** Names the stored forget requests, a JSON list of request bodies. */
+/** Names the ids of the stored forget requests, a JSON list. */
 const FORGETS_KEY = 'forgets';
 const MAX_ENVELOPE_EVENTS = 100;
 /**
@@ -97,11 +97,11 @@ interface Queue {
   /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
   removeIdentified(): Promise<QueuedEnvelope[]>;
   removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
-  /** Stores a forget request's body, unless it is stored already. */
-  addForget(body: string): Promise<void>;
-  /** Resolves to the stored forget request bodies, oldest first. */
+  /** Stores the id of a forget request, unless it is stored already. */
+  addForget(id: string): Promise<void>;
+  /** Resolves to the ids of the stored forget requests, oldest first. */
   forgets(): Promise<string[]>;
-  removeForget(body: string): Promise<void>;
+  removeForget(id: string): Promise<void>;
 }
 
 /** Returns a queue in `storage`. The caller holds a lock around each call. */
@@ -171,8 +171,8 @@ export function newQueue({
     return Array.isArray(bodies) ? bodies.filter((body): body is string => typeof body === 'string') : [];
   }
 
-  async function writeForgets(bodies: string[]): Promise<void> {
-    await storage.set(FORGETS_KEY, JSON.stringify(bodies));
+  async function writeForgets(ids: string[]): Promise<void> {
+    await storage.set(FORGETS_KEY, JSON.stringify(ids));
   }
 
   async function update(change: (items: QueuedEnvelope[]) => QueuedEnvelope[]): Promise<void> {
@@ -280,16 +280,16 @@ export function newQueue({
 
     removeAllButOptOuts: async () => unsent(await removeWhere((item) => item.isOptOut !== true)),
 
-    addForget: async (body) => {
-      const bodies = await readForgets();
-      if (!bodies.includes(body)) {
-        await writeForgets([...bodies, body]);
+    addForget: async (id) => {
+      const ids = await readForgets();
+      if (!ids.includes(id)) {
+        await writeForgets([...ids, id]);
       }
     },
 
     forgets: readForgets,
 
-    removeForget: async (body) => writeForgets((await readForgets()).filter((stored) => stored !== body)),
+    removeForget: async (id) => writeForgets((await readForgets()).filter((stored) => stored !== id)),
   };
 }
 
