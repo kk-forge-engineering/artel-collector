@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newMemoryStorage } from './exports.js';
-import { flushWhenHidden, newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from './web.js';
+import { newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from './web.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
-import { ENDPOINT, newHarness, USER_ID, SITE_KEY } from '../tests/harness.js';
+import { FakeDocument, stubListenedPage } from '../tests/fakePage.js';
+import { ENDPOINT, USER_ID, SITE_KEY } from '../tests/harness.js';
 
 /** The part of the Web Storage API the adapter uses, over a Map. */
 class FakeWebStorage {
@@ -19,19 +20,6 @@ class FakeWebStorage {
 }
 
 /** A visible document with a referrer, which a test can hide. */
-class FakeDocument extends EventTarget {
-  visibilityState: 'visible' | 'hidden' = 'visible';
-
-  constructor(readonly referrer = '') {
-    super();
-  }
-
-  hide(): void {
-    this.visibilityState = 'hidden';
-    this.dispatchEvent(new Event('visibilitychange'));
-  }
-}
-
 describe('newLocalStorageAdapter', () => {
   it('keeps values in localStorage and answers undefined for a missing key', async () => {
     const webStorage = new FakeWebStorage();
@@ -85,6 +73,7 @@ describe('pageFields', () => {
   it('gives the address of the page without its query and fragment, and the referrer as the browser gives it', () => {
     vi.stubGlobal('location', new URL('https://example.com/products/editor?tab=2#top'));
     vi.stubGlobal('document', new FakeDocument('https://www.google.com/search?q=report'));
+    vi.stubGlobal('window', new EventTarget());
 
     expect(pageFields()).toEqual({
       page: 'https://example.com/products/editor',
@@ -101,6 +90,7 @@ describe('the page a web collector sends by default', () => {
     vi.stubGlobal('navigator', { language: 'de-DE' });
     vi.stubGlobal('location', new URL(address));
     vi.stubGlobal('document', new FakeDocument(referrer));
+    vi.stubGlobal('window', new EventTarget());
     const usage = newWebCollector({
       key: SITE_KEY,
       version: '1.0.0',
@@ -130,45 +120,12 @@ describe('the page a web collector sends by default', () => {
   });
 });
 
-describe('flushWhenHidden', () => {
-  it('sends the queue when the page is hidden, and no more once stopped', async () => {
-    const page = new FakeDocument();
-    vi.stubGlobal('document', page);
-    const harness = newHarness();
-    const stop = flushWhenHidden(harness.collector);
-
-    await harness.collector.track('a');
-    page.hide();
-    await harness.clock.advance(0);
-    expect(harness.fetch.eventNames).toEqual(['a']);
-
-    stop();
-    await harness.collector.track('b');
-    page.hide();
-    await harness.clock.advance(0);
-    expect(harness.fetch.eventNames).toEqual(['a']);
-  });
-
-  it('sends nothing when the page becomes visible again', async () => {
-    const page = new FakeDocument();
-    vi.stubGlobal('document', page);
-    const harness = newHarness();
-    flushWhenHidden(harness.collector);
-
-    await harness.collector.track('a');
-    page.dispatchEvent(new Event('visibilitychange'));
-    await harness.clock.advance(0);
-
-    expect(harness.fetch.requests).toEqual([]);
-  });
-});
-
 describe('newWebCollector', () => {
   /**
    * Stubs a Firefox page at `/editor` with no Web Locks, and returns the network the collector posts to and the fake
    * `localStorage`.
    */
-  function stubPage(): { fetch: FakeFetch; webStorage: FakeWebStorage } {
+  function stubPage(): { fetch: FakeFetch; webStorage: FakeWebStorage; listened: string[] } {
     const fetch = new FakeFetch();
     const webStorage = new FakeWebStorage();
     vi.stubGlobal('fetch', fetch.fetch);
@@ -178,9 +135,16 @@ describe('newWebCollector', () => {
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
     });
     vi.stubGlobal('location', new URL('https://example.com/editor'));
-    vi.stubGlobal('document', new FakeDocument());
-    return { fetch, webStorage };
+    return { fetch, webStorage, listened: stubListenedPage() };
   }
+
+  it('adds no listener to the page: a send at hide would not finish before the page is gone', () => {
+    const { listened } = stubPage();
+
+    newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'anonymous' });
+
+    expect(listened).toEqual([]);
+  });
 
   it('sends a web envelope with the primary language of the user and the page, over localStorage, and no id or browser', async () => {
     const { fetch, webStorage } = stubPage();
@@ -234,6 +198,20 @@ describe('newWebCollector', () => {
       id: USER_ID,
       browser: { name: 'firefox', major: 132 },
       browser_language: 'de-DE',
+    });
+  });
+
+  it('detects the browser in the pseudonymous state too', async () => {
+    const { fetch } = stubPage();
+    const usage = newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'pseudonymous' });
+
+    await usage.setState('pseudonymous');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      id_kind: 'pseudonymous',
+      browser: { name: 'firefox', major: 132 },
     });
   });
 

@@ -37,7 +37,7 @@ const SYSTEM_EVENT_PARAMS: ReadonlyMap<string, Readonly<Record<string, ParamRule
  * Tells why the intake would drop the event, or returns undefined when its form passes. The check refuses `installed`,
  * `updated` and `opted_out`, because only the collector's own methods send them.
  */
-export function eventProblem(name: unknown, params: unknown): string | undefined {
+export function checkEvent(name: unknown, params: unknown): string | undefined {
   if (typeof name !== 'string' || !NAME_FORMAT.test(name)) {
     return 'has a name the intake does not take';
   }
@@ -48,11 +48,35 @@ export function eventProblem(name: unknown, params: unknown): string | undefined
 }
 
 /**
+ * Returns a copy of the params of an event `track` takes, or reports why it refuses the event and returns undefined.
+ * The copy is taken once, so a later change the host makes to its object reaches neither the check nor the event.
+ */
+export function acceptedEvent(
+  name: string,
+  given: EventParams | undefined,
+  reportError: (error: unknown) => void,
+): { params: EventParams | undefined } | undefined {
+  let params: EventParams | undefined;
+  try {
+    params = copyOfParams(given);
+  } catch (error) {
+    reportError(error);
+    return undefined;
+  }
+  const problem = checkEvent(name, params);
+  if (problem !== undefined) {
+    reportError(new Error(`artel: event ${quoted(name)} ${problem}, so it was not tracked`));
+    return undefined;
+  }
+  return { params };
+}
+
+/**
  * Returns a shallow copy of the own enumerable entries of object params, and other params as they are. The collector
  * checks and queues the copy, so a later change the host makes to its object reaches neither. Throws what a getter or a
  * proxy of the params throws.
  */
-export function copyOfParams(params: EventParams | undefined): EventParams | undefined {
+function copyOfParams(params: EventParams | undefined): EventParams | undefined {
   // An untyped host can pass null or a list. The function returns such params as they are, so the check refuses them.
   const value: unknown = params;
   return typeof value === 'object' && value !== null && !Array.isArray(value)

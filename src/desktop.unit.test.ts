@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { newDesktopCollector, type DesktopCollectorOptions } from './desktop.js';
 import { newMemoryStorage } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
+import { stubListenedPage } from '../tests/fakePage.js';
 import { DESKTOP_KEY, ENDPOINT, USER_ID, VERSION } from '../tests/harness.js';
 import { fromUntypedHost } from '../tests/untypedHost.js';
 
@@ -28,6 +29,25 @@ function stubWebview(): { items: Map<string, string>; lockNames: string[]; fetch
 }
 
 describe('newDesktopCollector', () => {
+  it('adds no listener to the window: a send at hide would not finish before the window is gone', () => {
+    stubWebview();
+    const listened = stubListenedPage();
+
+    newDesktopCollector({ ...OPTIONS, mode: 'anonymous' });
+
+    expect(listened).toEqual([]);
+  });
+
+  it('sends installed on its first start and updated on the first start of another version', async () => {
+    const { fetch } = stubWebview();
+
+    await newDesktopCollector({ ...OPTIONS, mode: 'anonymous' }).flush();
+    await newDesktopCollector({ ...OPTIONS, mode: 'anonymous' }).flush();
+    await newDesktopCollector({ ...OPTIONS, version: '4.3.0', mode: 'anonymous' }).flush();
+
+    expect(fetch.eventNames).toEqual(['installed', 'updated']);
+  });
+
   it('sends its platform and the primary browser language, over localStorage and Web Locks', async () => {
     const { items, lockNames, fetch } = stubWebview();
     const usage = newDesktopCollector({ ...OPTIONS, mode: 'anonymous' });
@@ -57,7 +77,7 @@ describe('newDesktopCollector', () => {
     await usage.track('report_exported');
     await usage.flush();
 
-    const envelope = fetch.requests[0]?.envelope;
+    const envelope = fetch.requests.at(-1)?.envelope;
     expect(envelope).toMatchObject({
       platform: 'windows',
       id: USER_ID,

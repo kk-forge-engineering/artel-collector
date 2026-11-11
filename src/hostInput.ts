@@ -1,5 +1,5 @@
 import { copyBrowser, type Browser } from './browser.js';
-import type { CollectorOptions, GetId } from './collectorTypes.js';
+import type { CollectorOptions, Delivery, GetId } from './collectorTypes.js';
 import { Platform } from './envelope.js';
 import { isVersion } from './fields.js';
 import type { Build } from './stateFields.js';
@@ -75,6 +75,19 @@ export function accepted(
  * platform that names none. A mistake in the build then fails its first run and its tests.
  */
 export function checkedBuild(options: CollectorOptions): Build {
+  checkOptions(options);
+  const { platform, version } = options;
+  if (options.browser !== undefined && platform !== Platform.Web && platform !== Platform.Extension) {
+    throw new TypeError(`artel: platform ${platform} names no browser`);
+  }
+  return { platform, version };
+}
+
+/**
+ * Throws the `TypeError` a constructor throws for a key, a version, a platform, an endpoint or a transport the intake
+ * would refuse every envelope of, and returns otherwise. It reads no host API, so a product's build or test can call it.
+ */
+export function checkOptions(options: Pick<CollectorOptions, 'key' | 'version' | 'platform'> & Delivery): void {
   checkDelivery(options);
   const { platform, version } = options;
   if (!Object.values(Platform).includes(platform)) {
@@ -84,10 +97,11 @@ export function checkedBuild(options: CollectorOptions): Build {
   if (!isVersion(version)) {
     throw new TypeError(`artel: version ${quoted(version)} is not one the intake takes`);
   }
-  if (options.browser !== undefined && platform !== Platform.Web && platform !== Platform.Extension) {
-    throw new TypeError(`artel: platform ${platform} names no browser`);
-  }
-  return { platform, version };
+}
+
+/** Tells whether `key` is a channel's test key, `<kind>-test-<10 characters>`. */
+export function isTestKey(key: string): boolean {
+  return CHANNEL_KINDS.some(({ kind, keyFormat }) => key.startsWith(`${kind}-test-`) && keyFormat.test(key));
 }
 
 /**
@@ -96,7 +110,7 @@ export function checkedBuild(options: CollectorOptions): Build {
  * refuses every URL with credentials, and a request to any other address never reaches the intake. The message quotes
  * no endpoint, so it never carries a password.
  */
-function checkDelivery({ endpoint, transport }: CollectorOptions): void {
+function checkDelivery({ endpoint, transport }: Delivery): void {
   if (transport !== undefined) {
     if (typeof transport !== 'function') {
       throw new TypeError(`artel: transport is a ${typeof transport}, not a function`);
@@ -172,6 +186,11 @@ function acceptedBrowser(browser: Browser | undefined, reportError: ReportError)
     reportError(new Error(`artel: browser ${quoted(browser)} is not a browser, left out`));
   }
   return copy;
+}
+
+/** Tells whether `id` is an id the intake takes: a string of 1 to 64 characters. */
+export function isUsableId(id: unknown): id is string {
+  return typeof id === 'string' && id !== '' && Array.from(id).length <= MAX_ID_LENGTH;
 }
 
 /**
