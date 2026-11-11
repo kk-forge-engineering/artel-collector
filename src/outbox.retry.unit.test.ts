@@ -88,7 +88,7 @@ describe('failures', () => {
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
 
     expect(statuses).toEqual([101]);
-    expect(harness.errors).toEqual([new Error('artel: intake answered 101')]);
+    expect(harness.errors).toEqual([new Error('artel: intake answered 101 to an envelope')]);
   });
 
   it.each([
@@ -315,8 +315,11 @@ describe('failures', () => {
     let answer: (() => void) | undefined;
     const harness = newHarness({
       getId: () => USER_ID,
+      // Only the envelope's request waits for the test. The forget request that follows it is answered at once.
       transport: async () => {
-        await new Promise<void>((resolve) => (answer = resolve));
+        if (answer === undefined) {
+          await new Promise<void>((resolve) => (answer = resolve));
+        }
         return 204;
       },
     });

@@ -45,6 +45,9 @@ export function newExtensionCollector(
   options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
 ): Collector<'identified'>;
 export function newExtensionCollector(
+  options: ExtensionCollectorOptions & { mode: typeof Mode.Pseudonymous },
+): Collector<'pseudonymous'>;
+export function newExtensionCollector(
   options: ExtensionCollectorOptions & { mode: typeof Mode.Anonymous },
 ): Collector<'anonymous'>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector;
@@ -59,9 +62,9 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
-  return options.mode === Mode.Identified
-    ? newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) })
-    : newCollector({ ...options, ...defaults });
+  return options.mode === Mode.Anonymous
+    ? newCollector({ ...options, ...defaults })
+    : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */

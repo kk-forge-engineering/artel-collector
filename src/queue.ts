@@ -1,7 +1,9 @@
-import { LifecycleEvent, type Envelope, type UsageEvent } from './envelope.js';
+import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
 
 const QUEUE_KEY = 'queue';
+/** Names the stored forget requests, a JSON list of request bodies. */
+const FORGETS_KEY = 'forgets';
 const MAX_ENVELOPE_EVENTS = 100;
 /**
  * The largest request body, under 64 KiB with some margin. A keepalive request and the intake both refuse a larger
@@ -26,16 +28,17 @@ export interface QueuedEnvelope {
   leasedBy?: string;
   /** The time the lease ends, in epoch milliseconds. */
   leasedUntil?: number;
-  /** Marks an identified envelope whose user the product does not know yet. It waits for the id and goes with it. */
+  /** Marks an envelope of a state with an id the product does not know yet. It waits for the id and goes with it. */
   awaitsId?: true;
   /** Marks the envelope of an `opted_out`, which the intake takes only alone. No other event joins it. */
   isOptOut?: true;
   envelope: Envelope;
 }
 
-/** The user that an identified envelope names, known once the product knows the id. */
+/** The user that an envelope awaiting an id names, known once the product knows the id. */
 export interface Identity {
   id: string;
+  id_kind: IdKind;
   browser?: Envelope['browser'];
 }
 
@@ -55,9 +58,10 @@ export interface LeaseTerms {
 }
 
 /**
- * Keeps envelopes in storage until the intake takes them, so a host that stops, such as an idle extension service
- * worker, loses none. A method that drops envelopes resolves to those whose marks may go back: the ones no seal stored
- * a body for, since the intake may keep a request that failed for the sender. `removeId` resolves to all of them.
+ * Keeps envelopes and forget requests in storage until the intake takes them, so a host that stops, such as an idle
+ * extension service worker, loses none. A method that drops envelopes resolves to those whose marks may go back: the
+ * ones no seal stored a body for, since the intake may keep a request that failed for the sender. `removeId` resolves
+ * to all of them.
  */
 interface Queue {
   /**
@@ -93,6 +97,11 @@ interface Queue {
   /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
   removeIdentified(): Promise<QueuedEnvelope[]>;
   removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
+  /** Stores a forget request's body, unless it is stored already. */
+  addForget(body: string): Promise<void>;
+  /** Resolves to the stored forget request bodies, oldest first. */
+  forgets(): Promise<string[]>;
+  removeForget(body: string): Promise<void>;
 }
 
 /** Returns a queue in `storage`. The caller holds a lock around each call. */
@@ -156,6 +165,21 @@ export function newQueue({
     }
     const gone = new Set([...droppedOptOuts, ...dropped]);
     return { kept: items.filter((item) => !gone.has(item)), dropped: unsent(dropped) };
+  }
+
+  /** Returns the stored forget requests. A value that is no JSON list reads as none, and only its strings count. */
+  async function readForgets(): Promise<string[]> {
+    let bodies: unknown;
+    try {
+      bodies = JSON.parse((await storage.get(FORGETS_KEY)) ?? '[]');
+    } catch {
+      return [];
+    }
+    return Array.isArray(bodies) ? bodies.filter((body): body is string => typeof body === 'string') : [];
+  }
+
+  async function writeForgets(bodies: string[]): Promise<void> {
+    await storage.set(FORGETS_KEY, JSON.stringify(bodies));
   }
 
   async function update(change: (items: QueuedEnvelope[]) => QueuedEnvelope[]): Promise<void> {
@@ -222,14 +246,15 @@ export function newQueue({
         return undefined;
       }
       if (item.awaitsId === true && identity !== undefined) {
-        // The browser, the session and the id go after the other fields and the events. The body stored at this seal
-        // keeps that order on every attempt.
+        // The browser, the session and the id with its kind go after the other fields and the events. The body stored
+        // at this seal keeps that order on every attempt.
         const { session, ...fields } = item.envelope;
         item.envelope = {
           ...fields,
           ...(identity.browser !== undefined && { browser: identity.browser }),
           session,
           id: identity.id,
+          id_kind: identity.id_kind,
         };
         delete item.awaitsId;
       }
@@ -261,6 +286,17 @@ export function newQueue({
       unsent(await removeWhere((item) => item.envelope.id !== undefined || item.awaitsId === true)),
 
     removeAllButOptOuts: async () => unsent(await removeWhere((item) => item.isOptOut !== true)),
+
+    addForget: async (body) => {
+      const bodies = await readForgets();
+      if (!bodies.includes(body)) {
+        await writeForgets([...bodies, body]);
+      }
+    },
+
+    forgets: readForgets,
+
+    removeForget: async (body) => writeForgets((await readForgets()).filter((stored) => stored !== body)),
   };
 }
 
@@ -292,8 +328,10 @@ function fits(envelope: Envelope, event: UsageEvent): boolean {
   return new TextEncoder().encode(JSON.stringify(withEvent)).length <= MAX_ENVELOPE_BYTES;
 }
 
-export function newRandomId(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+/** Returns `byteCount` random bytes, 8 by default, as lowercase hex. */
+export function newRandomId(byteCount = 8): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(byteCount));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function isQueuedEnvelope(value: unknown): value is QueuedEnvelope {

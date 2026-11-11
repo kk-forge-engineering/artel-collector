@@ -7,11 +7,13 @@ import type { StorageAdapter } from './storage.js';
 import type { Transport } from './transport.js';
 
 /**
- * What a channel may collect at most, as set in the intake's admin. The collector's mode matches its channel's. An
- * identified channel lets a user who agrees be identified. An anonymous one never does.
+ * What a channel may collect at most, as set in the intake's admin. The collector's mode matches its channel's. Each
+ * mode takes the states up to its own: a pseudonymous channel adds the install id, and an identified one the account
+ * id.
  */
 export const Mode = {
   Anonymous: 'anonymous',
+  Pseudonymous: 'pseudonymous',
   Identified: 'identified',
 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
@@ -22,15 +24,25 @@ export const AnalyticsState = {
   OptedOut: 'opted_out',
   /** Sends events with no id or browser, the primary languages only and coarse ages. Needs no consent. */
   Anonymous: 'anonymous',
-  /** Sends the id from `getId`, the browser, the full languages and exact ages. Only an identified channel takes it. */
+  /**
+   * Sends a random install id the collector makes and stores, the browser, the full languages and exact ages. Needs
+   * consent. A pseudonymous or identified channel takes it.
+   */
+  Pseudonymous: 'pseudonymous',
+  /**
+   * Sends what the pseudonymous state sends, with the id from `getId` in place of the install id. Needs consent. Only
+   * an identified channel takes it.
+   */
   Identified: 'identified',
 } as const;
 export type AnalyticsState = (typeof AnalyticsState)[keyof typeof AnalyticsState];
 
-/** The states a collector of channel mode `M` takes: an anonymous channel never identifies a user. */
+/** The states a collector of channel mode `M` takes: those up to its mode. */
 export type StateOf<M extends Mode> = M extends typeof Mode.Identified
   ? AnalyticsState
-  : Exclude<AnalyticsState, typeof AnalyticsState.Identified>;
+  : M extends typeof Mode.Pseudonymous
+    ? Exclude<AnalyticsState, typeof AnalyticsState.Identified>
+    : Exclude<AnalyticsState, typeof AnalyticsState.Pseudonymous | typeof AnalyticsState.Identified>;
 
 /**
  * Returns the user's id, or undefined while the product does not know it yet. The collector never makes one up. The
@@ -79,18 +91,21 @@ export interface CommonOptions {
 /** Where envelopes go: the intake's address, or the product's own transport instead. */
 export type Delivery = { endpoint: string; transport?: never } | { transport: Transport; endpoint?: never };
 
-/** The channel mode, with what an identified channel takes besides. */
+/**
+ * The browser the product runs in, or a function that returns it, such as `() => detectBrowser(navigator)`. The
+ * collector calls the function once, for the first event with an id, the only kind of envelope that carries it.
+ */
+type BrowserOption = Browser | (() => Browser | undefined) | undefined;
+
+/** The channel mode, with what a channel with an id takes besides. */
 export type ModeOptions =
   | { mode: typeof Mode.Anonymous; getId?: never; browser?: never }
+  | { mode: typeof Mode.Pseudonymous; getId?: never; browser?: BrowserOption }
   | {
       mode: typeof Mode.Identified;
       /** Gives the id in the identified state. The collector calls it in no other state. */
       getId: GetId;
-      /**
-       * The browser the product runs in, or a function that returns it, such as `() => detectBrowser(navigator)`. The
-       * collector calls the function once, for the first event with an id, the only kind of envelope that carries it.
-       */
-      browser?: Browser | (() => Browser | undefined) | undefined;
+      browser?: BrowserOption;
     };
 
 /** The options only a site's collector takes, since only platform web sends pages. */
@@ -144,7 +159,7 @@ export type ActiveDaysBucket = (typeof ActiveDaysBucket)[keyof typeof ActiveDays
 
 /** What an uninstall page gets in its query string, shaped by the state as an envelope is. */
 export interface UninstallParams extends ProductFields {
-  /** Days since install: exact up to 31 in the identified state, a bucket otherwise. */
+  /** Days since install: exact up to 31 in a state with an id, a bucket otherwise. */
   age_days: number;
   /** The bucket of the number of local days with an event. */
   active_days: ActiveDaysBucket;
@@ -169,8 +184,9 @@ export interface Collector<M extends Mode = Mode> {
   /**
    * Stores the user's choice and starts a new session. Switching to `opted_out` drops what was not sent, except an
    * earlier `opted_out`, and sends one `opted_out`, at once or at the end of a retry wait that is running. Switching
-   * from `identified` drops the queued events that name the user. A dropped event that no request carried gives back
-   * its marks. The same state again does nothing.
+   * from `pseudonymous` or `identified` forgets the last id, as `forget` does, and drops the queued events that wait
+   * for an id. Switching from `pseudonymous` also deletes the install id. A dropped event that no request carried gives
+   * back its marks. The same state again does nothing.
    */
   setState(state: StateOf<M>): Promise<void>;
   /**
@@ -184,10 +200,10 @@ export interface Collector<M extends Mode = Mode> {
    */
   flush(): Promise<void>;
   /**
-   * Drops this id's queued events and resolves once this collector's request in progress ends. For the last id, it also
-   * drops the events that wait for an id, and the next id counts as another user. The host calls it once the user left
-   * the identified state or `getId` stopped giving the id, then asks the intake to forget the user. The intake also
-   * deletes the user's events that arrive within a minute after the forget, such as a request from another context.
+   * Drops this id's queued events and asks the intake to delete the id's events, after this collector's request in
+   * progress. For the last id, it also drops the events that wait for an id, and the next id counts as another user.
+   * The collector stores the request until the intake answers it. The intake also deletes the user's events that arrive
+   * within a minute after the forget, such as a request from another context.
    */
   forget(id: string): Promise<void>;
   /**

@@ -237,6 +237,20 @@ describe('newWebCollector', () => {
     });
   });
 
+  it('detects the browser in the pseudonymous state too', async () => {
+    const { fetch } = stubPage();
+    const usage = newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'pseudonymous' });
+
+    await usage.setState('pseudonymous');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      id_kind: 'pseudonymous',
+      browser: { name: 'firefox', major: 132 },
+    });
+  });
+
   it('sends the browser it is given over the one it detects', async () => {
     const { fetch } = stubPage();
     const usage = newWebCollector({

@@ -174,6 +174,11 @@ function acceptedBrowser(browser: Browser | undefined, reportError: ReportError)
   return copy;
 }
 
+/** Tells whether `id` is an id the intake takes: a string of 1 to 64 characters. */
+export function isUsableId(id: unknown): id is string {
+  return typeof id === 'string' && id !== '' && Array.from(id).length <= MAX_ID_LENGTH;
+}
+
 /**
  * Returns a `getId` that gives a non-empty string of at most 64 characters, or undefined. A host outside TypeScript may
  * return null or an empty string, which then reads as an id the product does not know yet.

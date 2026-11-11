@@ -60,6 +60,9 @@ export interface UsageEvent {
   referrer?: string;
 }
 
+/** Where an envelope's `id` comes from: the install id the collector makes, or the account id from `getId`. */
+export type IdKind = 'pseudonymous' | 'identified';
+
 /** What one request to the intake carries. */
 export interface Envelope {
   key: string;
@@ -76,6 +79,8 @@ export interface Envelope {
   browser?: Browser;
   session: string;
   id?: string;
+  /** Present exactly when `id` is. The intake keeps the id only when its kind is within the channel's mode. */
+  id_kind?: IdKind;
   /** Stays the same on each retry of this envelope. The intake keeps it once. */
   batch?: string;
   events: UsageEvent[];

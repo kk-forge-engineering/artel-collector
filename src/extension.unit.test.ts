@@ -92,6 +92,20 @@ describe('newExtensionCollector', () => {
     });
   });
 
+  it('detects the browser in the pseudonymous state too', async () => {
+    const { fetch } = stubWorker();
+    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'pseudonymous' });
+
+    await usage.setState('pseudonymous');
+    await usage.track('report_exported');
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      id_kind: 'pseudonymous',
+      browser: { name: 'chrome', major: 131 },
+    });
+  });
+
   it('sends the interface language the product gives', async () => {
     const { fetch } = stubWorker();
     const usage = newExtensionCollector({

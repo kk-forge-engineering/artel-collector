@@ -29,6 +29,9 @@ export function newDesktopCollector(
   options: DesktopCollectorOptions & { mode: typeof Mode.Identified },
 ): Collector<'identified'>;
 export function newDesktopCollector(
+  options: DesktopCollectorOptions & { mode: typeof Mode.Pseudonymous },
+): Collector<'pseudonymous'>;
+export function newDesktopCollector(
   options: DesktopCollectorOptions & { mode: typeof Mode.Anonymous },
 ): Collector<'anonymous'>;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector;
