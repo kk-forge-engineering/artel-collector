@@ -1,22 +1,24 @@
-import { describe, expect, it } from 'vitest';
-import { AnalyticsState } from './exports.js';
-import { forwardTrack } from './extension.js';
-import { newExtensionHarness } from '../tests/fakeChrome.js';
+import { describe, expect, it, vi } from 'vitest';
+import { AnalyticsState, newMemoryStorage } from './exports.js';
+import { forwardTrack, newExtensionCollector } from './extension.js';
+import { newExtensionHarness, stubChrome } from '../tests/fakeChrome.js';
+import { FakeClock } from '../tests/fakeClock.js';
+import { KEY } from '../tests/harness.js';
 
 const UNINSTALL_PAGE = 'https://example.com/uninstall?product=demo';
 
 describe('the service worker collector', () => {
-  it('sends installed when Chrome installs the extension, and updated when Chrome updates it', async () => {
-    const { chrome, fetch, settle } = newExtensionHarness({ isWorker: true });
+  it('sends installed when Chrome installs the extension, and updated when Chrome updates it to a new version', async () => {
+    const storage = newMemoryStorage();
+    const installed = newExtensionHarness({ isWorker: true, storage });
+    installed.chrome.install('install');
+    await installed.settle();
 
-    chrome.install('install');
-    await settle();
-    chrome.runtime.getManifest = () => ({ version: '3.2.0' });
-    const updated = newExtensionHarness({ isWorker: true });
+    const updated = newExtensionHarness({ isWorker: true, storage, version: '3.2.0' });
     updated.chrome.install('update');
     await updated.settle();
 
-    expect(fetch.eventNames).toEqual(['installed']);
+    expect(installed.fetch.eventNames).toEqual(['installed']);
     expect(updated.fetch.eventNames).toEqual(['updated']);
   });
 
@@ -81,6 +83,39 @@ describe('uninstallPage', () => {
     expect(chrome.uninstallUrl).toBe(UNINSTALL_PAGE);
   });
 
+  it('sets the page alone as soon as the user opts out, before the opted_out send ends', async () => {
+    const chrome = stubChrome();
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    let answer: ((status: number) => void) | undefined;
+    const collector = newExtensionCollector({
+      key: KEY,
+      mode: 'anonymous',
+      storage: newMemoryStorage(),
+      clock: new FakeClock('2026-10-29T10:00:00'),
+      // The opted_out request stays in flight until the test answers it, as on a slow network.
+      transport: () => new Promise<number>((resolve) => (answer = resolve)),
+      uninstallPage: UNINSTALL_PAGE,
+    });
+    await expect.poll(() => chrome.uninstallUrl).toContain('age_days');
+
+    const optingOut = collector.setState(AnalyticsState.OptedOut);
+    await expect.poll(() => answer).toBeDefined();
+    const urlWhileSending = chrome.uninstallUrl;
+    answer?.(204);
+    await optingOut;
+
+    expect([urlWhileSending, chrome.uninstallUrl]).toEqual([UNINSTALL_PAGE, UNINSTALL_PAGE]);
+  });
+
+  it('sets the uninstall parameters again once the user leaves the opted_out state', async () => {
+    const { chrome, collector } = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
+    await collector.setState(AnalyticsState.OptedOut);
+
+    await collector.setState(AnalyticsState.Anonymous);
+
+    expect(new URL(chrome.uninstallUrl).searchParams.get('age_days')).toBe('0');
+  });
+
   it('sets no uninstall page without the option', async () => {
     const { chrome, collector } = newExtensionHarness({ isWorker: true });
 
@@ -94,7 +129,8 @@ describe('uninstallPage', () => {
 
     await collector.setState(AnalyticsState.OptedOut);
 
-    expect(errors).toHaveLength(2);
+    // The page goes at construction, before the opt-out and after it.
+    expect(errors).toHaveLength(3);
     expect(errors.every((error) => error instanceof TypeError)).toBe(true);
   });
 

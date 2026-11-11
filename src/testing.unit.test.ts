@@ -10,29 +10,58 @@ describe('newRecordingCollector', () => {
 
     await collector.installed();
     await collector.installed();
-    await collector.updated();
     await collector.track('report_exported', { format: 'pdf' });
     await collector.flush();
 
-    expect(collector.events).toEqual([
-      { name: 'installed' },
-      { name: 'updated' },
-      { name: 'report_exported', params: { format: 'pdf' } },
-    ]);
+    expect(collector.events).toEqual([{ name: 'installed' }, { name: 'report_exported', params: { format: 'pdf' } }]);
     expect(await collector.getState()).toBe('anonymous');
     expect(await collector.uninstallParams()).toBeUndefined();
   });
 
-  it('keeps the state and records nothing while opted out', async () => {
-    const collector = newRecordingCollector(Mode.Anonymous);
+  it.each([
+    ['installed, updated, updated', ['installed', 'updated', 'updated'], ['installed']],
+    ['updated, updated', ['updated', 'updated'], ['updated']],
+  ])('records installed and updated as the real collector sends them of one version: %s', async (_, calls, sent) => {
+    const recording = newRecordingCollector(Mode.Anonymous);
+    const real = newHarness();
+    for (const collector of [recording, real.collector]) {
+      for (const call of calls) {
+        await (call === 'installed' ? collector.installed() : collector.updated());
+      }
+    }
+    await real.settle();
 
-    await collector.setState(AnalyticsState.OptedOut);
-    await collector.track('a');
-    await collector.installed();
+    expect(real.fetch.eventNames).toEqual(sent);
+    expect(recording.events.map((event) => event.name)).toEqual(sent);
+  });
+
+  it('records the one opted_out the real collector sends at the opt-out, then nothing while opted out', async () => {
+    const recording = newRecordingCollector(Mode.Anonymous);
+    const real = newHarness();
+    for (const collector of [recording, real.collector]) {
+      await collector.setState(AnalyticsState.OptedOut);
+      await collector.setState(AnalyticsState.OptedOut);
+      await collector.track('a');
+      await collector.installed();
+    }
+    await real.settle();
+
+    expect(real.fetch.eventNames).toEqual(['opted_out']);
+    expect(recording.events.map((event) => event.name)).toEqual(['opted_out']);
+    expect(await recording.getState()).toBe('opted_out');
+  });
+
+  it('refuses to forget an id the intake refuses, with the same report', async () => {
+    const errors: Error[] = [];
+    const collector = newRecordingCollector(Mode.Anonymous, { onError: (error) => errors.push(error) });
+    const real = newHarness();
+
+    await collector.forget('');
     await collector.forget('user');
+    await real.collector.forget('');
 
-    expect(await collector.getState()).toBe('opted_out');
-    expect(collector.events).toEqual([]);
+    expect(errors).toEqual(real.errors);
+    expect(errors).toHaveLength(1);
   });
 
   it('refuses an event track refuses, with the same report', async () => {
@@ -79,10 +108,11 @@ describe('queuedEvents', () => {
     expect(await queuedEvents(harness.storage, 'site-aa131n3j11')).toEqual([]);
   });
 
-  it('reads a stored queue that is no JSON list as empty', async () => {
+  it.each(['{not json', '{"a":1}'])('reads a stored queue %s as empty, and leaves it as it was', async (stored) => {
     const harness = newHarness();
-    await harness.storage.set(QUEUE_KEY, '{not json');
+    await harness.storage.set(QUEUE_KEY, stored);
 
     expect(await queuedEvents(harness.storage, KEY)).toEqual([]);
+    expect(await harness.storage.get(QUEUE_KEY)).toBe(stored);
   });
 });

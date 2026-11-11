@@ -102,10 +102,13 @@ export interface ExtensionHarness {
 export function newExtensionHarness({
   isWorker,
   uninstallPage,
+  version,
   storage = newMemoryStorage(),
 }: {
   isWorker: boolean;
   uninstallPage?: string;
+  /** The product version, the fake manifest's `3.1.0` by default. */
+  version?: string;
   storage?: StorageAdapter;
 }): ExtensionHarness {
   if (isWorker) {
@@ -124,6 +127,7 @@ export function newExtensionHarness({
     transport: newHttpTransport(ENDPOINT, { fetch: fetch.fetch, clock }),
     onError: (error) => errors.push(error),
     ...(uninstallPage !== undefined && { uninstallPage }),
+    ...(version !== undefined && { version }),
   });
   return { collector, chrome, fetch, clock, errors, settle: () => clock.advance(SEND_DELAY_MS + RETRY_DELAY_MS) };
 }

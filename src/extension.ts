@@ -1,7 +1,15 @@
 import { detectBrowser } from './browser.js';
 import { systemClock, type Clock } from './clock.js';
 import { newCollector } from './collector.js';
-import { Mode, type Collector, type CommonOptions, type Delivery, type ModeOptions } from './collectorTypes.js';
+import {
+  AnalyticsState,
+  Mode,
+  type Collector,
+  type CommonOptions,
+  type Delivery,
+  type ModeOptions,
+  type UninstallParams,
+} from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { checkEvent } from './eventCheck.js';
 import { flushOnHide } from './flushOnHide.js';
@@ -46,8 +54,8 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
  * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
  * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The worker's
  * collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content scripts
- * forward. Chrome takes these listeners only from the worker's first run, so the product builds it at the worker's top
- * level. A page's collector sends its queue when the page is hidden.
+ * forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of the
+ * worker, so the product builds it there. A page's collector sends its queue when the page is hidden.
  */
 export function newExtensionCollector(
   options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
@@ -118,6 +126,11 @@ function withUninstallPage(
   return {
     ...collector,
     setState: async (state) => {
+      if (state === AnalyticsState.OptedOut) {
+        // The opted_out send can take 30 seconds or more, and the page must not carry the earlier state's fields
+        // meanwhile. The opted_out state's page carries none.
+        await setUninstallUrl(pageUrl, undefined, onError);
+      }
       await collector.setState(state);
       await refreshUninstallUrl(collector, pageUrl, onError);
     },
@@ -238,9 +251,17 @@ async function refreshUninstallUrl(
   pageUrl: string,
   onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
+  await setUninstallUrl(pageUrl, await collector.uninstallParams(), onError);
+}
+
+/** Sets the uninstall page to `pageUrl` with `params` added to its query. A failure goes to `onError`. */
+async function setUninstallUrl(
+  pageUrl: string,
+  params: UninstallParams | undefined,
+  onError: ((error: Error) => void) | undefined,
+): Promise<void> {
   try {
     const url = new URL(pageUrl);
-    const params = await collector.uninstallParams();
     for (const [name, value] of Object.entries(params ?? {})) {
       url.searchParams.set(name, String(value));
     }

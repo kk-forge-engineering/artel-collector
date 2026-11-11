@@ -1,7 +1,7 @@
 import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
 
-const QUEUE_KEY = 'queue';
+export const QUEUE_KEY = 'queue';
 /** Names the stored forget requests, a JSON list of request bodies. */
 const FORGETS_KEY = 'forgets';
 const MAX_ENVELOPE_EVENTS = 100;
@@ -97,8 +97,6 @@ interface Queue {
   /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
   removeIdentified(): Promise<QueuedEnvelope[]>;
   removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
-  /** Resolves to the stored envelopes, oldest first. */
-  envelopes(): Promise<QueuedEnvelope[]>;
   /** Stores a forget request's body, unless it is stored already. */
   addForget(body: string): Promise<void>;
   /** Resolves to the stored forget request bodies, oldest first. */
@@ -120,20 +118,13 @@ export function newQueue({
    * throw.
    */
   async function read(): Promise<QueuedEnvelope[]> {
-    const stored = (await storage.get(QUEUE_KEY)) ?? '[]';
-    let queued: unknown;
-    try {
-      queued = JSON.parse(stored);
-    } catch {
-      // The check below reports its own error and drops the parser's error. The parser's message quotes the stored
-      // text, which may hold an id or a page.
-    }
-    if (!Array.isArray(queued)) {
+    const queued = parseQueue(await storage.get(QUEUE_KEY));
+    if (queued === undefined) {
       reportError(new Error('artel: the stored queue is not a JSON list, so it was dropped'));
       await write([]);
       return [];
     }
-    return queued.filter(isQueuedEnvelope);
+    return queued;
   }
 
   async function write(items: QueuedEnvelope[]): Promise<void> {
@@ -298,10 +289,23 @@ export function newQueue({
 
     forgets: readForgets,
 
-    envelopes: read,
-
     removeForget: async (body) => writeForgets((await readForgets()).filter((stored) => stored !== body)),
   };
+}
+
+/**
+ * Returns the envelopes of a stored queue, oldest first, or undefined for a value that is no JSON list. It skips an item
+ * without a queue id and an envelope with a list of events.
+ */
+export function parseQueue(stored: string | undefined): QueuedEnvelope[] | undefined {
+  let queued: unknown;
+  try {
+    queued = JSON.parse(stored ?? '[]');
+  } catch {
+    // The caller reports a queue that is no list. The parser's message quotes the stored text, which may hold an id or
+    // a page, so it goes nowhere.
+  }
+  return Array.isArray(queued) ? queued.filter(isQueuedEnvelope) : undefined;
 }
 
 /** Returns the envelopes no seal stored a body for, which no request carried to the intake. */

@@ -55,15 +55,15 @@ One line per context makes its collector. `key`, `version`, `endpoint` and `unin
 
 ```ts
 // a website or a web app
-const usage = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
+const analytics = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
 // a Chrome extension: the service worker, at its top level
-const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
+const analytics = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
 // a Chrome extension: each of its pages, such as the popup or the options page
-const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
+const analytics = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
 // a content script of that extension, which hands its events to the service worker
-const usage = newContentScriptCollector();
+const analytics = newContentScriptCollector();
 // a window of a desktop app, such as a Tauri webview, where `platform` is 'macos', 'windows' or 'linux'
-const usage = newDesktopCollector({ key, version, endpoint, platform, mode: 'anonymous' });
+const analytics = newDesktopCollector({ key, version, endpoint, platform, mode: 'anonymous' });
 ```
 
 A channel of another mode passes it, and `getId` in the identified mode, such as `mode: 'identified', getId`. A site whose paths carry a secret or a person passes `getPage: () => ({ page: route.pattern, referrer: document.referrer })` to send the route pattern instead.
@@ -71,9 +71,10 @@ A channel of another mode passes it, and `getId` in the identified mode, such as
 Then the product tracks what the user does, and stores their choice when they make it, here in a pseudonymous channel:
 
 ```ts
-void usage.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
-void usage.setState(consented ? 'pseudonymous' : 'anonymous');
-void usage.setState('opted_out'); // the user turned usage statistics off
+const analytics = newWebCollector({ key, version, endpoint, mode: 'pseudonymous' });
+void analytics.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
+void analytics.setState(consented ? 'pseudonymous' : 'anonymous');
+void analytics.setState('opted_out'); // the user turned usage statistics off
 ```
 
 The collectors do the rest themselves:
@@ -224,8 +225,8 @@ A site sets up page views in two lines:
 ```ts
 import { newWebCollector, trackPageViews } from '@kk-forge/artel-collector/web';
 
-const usage = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
-trackPageViews(usage);
+const analytics = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
+trackPageViews(analytics);
 ```
 
 ### `@kk-forge/artel-collector/extension`
@@ -237,14 +238,14 @@ For a Chrome extension. Its service worker and its pages each make a collector w
 - `newContentScriptCollector()` returns the collector of a content script, typed `ContentScriptCollector`: `track` and `flush` only. Its `track` is `forwardTrack`, so the worker's collector checks, queues and sends the event under the user's choice, and `flush` does nothing. The user's choice lives in the service worker and the extension pages, so a content script can neither read nor change it, and its types say so. It reads no storage, needs no key, version or endpoint, and never throws.
 - `forwardTrack(name, params?)` hands an event from a content script to the service worker. A content script's own requests carry the page's origin, which the intake refuses. It never rejects. While the worker cannot take the message, as during an update, the event is lost.
 - The service worker's collector tracks the events content scripts forward. It takes them only from this extension, and only the product's own events. It refuses every system event of the intake, which the intake counts from any product without its allowlist: `installed`, `updated`, `opted_out`, `uninstalled`, `welcome_opened`, `page_view` and `install_click`. It also refuses each event `track` refuses. A page can open any number of frames that run the content script. So the worker tracks at most 60 forwarded events a minute from all tabs and frames together, and drops the rest. It keeps the count in memory, so a restart of the worker starts it again.
-- The service worker's collector sends `installed` at Chrome's `onInstalled` with reason `install`, and `updated` with reason `update`. It also adds an empty `onStartup` listener, so Chrome starts the worker with the browser and the worker closes the storage again before content scripts run. Chrome takes these listeners only from the worker's first run, so build the collector at the worker's top level. A product may add `onInstalled` listeners of its own, such as one that opens a welcome page.
+- The service worker's collector sends `installed` at Chrome's `onInstalled` with reason `install`, and `updated` with reason `update`. It also adds an empty `onStartup` listener, so Chrome starts the worker with the browser and the worker closes the storage again before content scripts run. Chrome needs these listeners registered synchronously at the worker's top level on every start of the worker, so build the collector there. A product may add `onInstalled` listeners of its own, such as one that opens a welcome page.
 - `uninstallPage`, an option of `newExtensionCollector`: the address Chrome opens when the user removes the extension. The collector sets it with the fields of `uninstallParams()` added to its query, or alone when `uninstallParams()` resolves to `undefined`, at construction and after each `setState`, in the worker and in each page, since Chrome keeps the address as it was set. Left out, the collector sets no uninstall page.
 
 ```ts
 // service worker
 import { newExtensionCollector } from '@kk-forge/artel-collector/extension';
 
-const usage = newExtensionCollector({
+const analytics = newExtensionCollector({
   key,
   endpoint,
   mode: 'anonymous',
@@ -254,8 +255,8 @@ const usage = newExtensionCollector({
 // content script
 import { newContentScriptCollector } from '@kk-forge/artel-collector/extension';
 
-const usage = newContentScriptCollector();
-void usage.track('link_shared', { target: 'clipboard' });
+const analytics = newContentScriptCollector();
+void analytics.track('link_shared', { target: 'clipboard' });
 ```
 
 ### `@kk-forge/artel-collector/desktop`
@@ -326,8 +327,8 @@ The core reads no page, URL or user input. `params`, the account `id` and the pa
 
 `@kk-forge/artel-collector/testing` serves a product's own tests:
 
-- `newRecordingCollector(mode?, { onError }?)` returns a `Collector` that sends nothing and records each event it takes in `events`, as `{ name, params }`. `mode` is the channel mode, `identified` by default, so it takes every state. The user starts in `anonymous`. It refuses an event `track` refuses, and a state above the mode, with the same report to `onError`, so a test catches a bad event name or param. It records nothing in the `opted_out` state, `installed` only once, and `uninstallParams()` resolves to `undefined`.
-- `queuedEvents(storage, key)` resolves to the `{ name, params }` of the events a real collector of channel `key` holds queued in `storage`, oldest first.
+- `newRecordingCollector(mode?, { onError }?)` returns a `Collector` that sends nothing and records each event it takes in `events`, as `{ name, params }`. `mode` is the channel mode, `identified` by default, so it takes every state. The user starts in `anonymous`. It refuses an event `track` refuses, a state above the mode and an id `forget` refuses, with the same report to `onError`, so a test catches a bad event name or param. It records what the real collector sends: `opted_out` once at the opt-out and nothing after it in that state, `installed` once, and `updated` only when neither was recorded before, as for one version. `uninstallParams()` resolves to `undefined`.
+- `queuedEvents(storage, key)` resolves to the `{ name, params }` of the events a real collector of channel `key` holds queued in `storage`, oldest first. It writes nothing, and reads a stored queue that is no JSON list as empty.
 
 The main module exports three checks that read no `chrome`, `navigator` or storage, so a build script or a test can call them:
 
