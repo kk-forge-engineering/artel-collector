@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AnalyticsState, newCollector, newMemoryStorage, Platform, type Transport } from './exports.js';
+import { newDesktopCollector } from './desktop.js';
 import { newExtensionCollector } from './extension.js';
 import { newWebCollector } from './web.js';
 import { DESKTOP_KEY, ENDPOINT, KEY, newHarness, SITE_KEY, USER_ID, VERSION } from '../tests/harness.js';
@@ -95,14 +96,17 @@ describe('options the intake would refuse every envelope of, or that only untype
     expect(thrownFor({ endpoint })).toEqual(new TypeError(ENDPOINT_MESSAGE));
   });
 
-  it('throw from the web and extension constructors too', () => {
+  it('throw from the web, extension and desktop constructors too', () => {
     const common = { version: VERSION, endpoint: ENDPOINT, mode: 'anonymous', browserLanguage: 'en' } as const;
 
     expect(() => newWebCollector({ ...common, key: KEY })).toThrow(
       new TypeError('artel: a key of kind extension does not take platform web'),
     );
-    expect(() => newExtensionCollector({ ...common, key: SITE_KEY, uiLanguage: 'en' })).toThrow(
+    expect(() => newExtensionCollector({ ...common, key: SITE_KEY })).toThrow(
       new TypeError('artel: a key of kind site does not take platform extension'),
+    );
+    expect(() => newDesktopCollector({ ...common, key: KEY, platform: 'linux' })).toThrow(
+      new TypeError('artel: a key of kind extension does not take platform linux'),
     );
   });
 });

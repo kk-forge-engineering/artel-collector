@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { acceptForwarded, forwardTrack } from './extension.js';
+import { acceptForwarded, forwardTrack, newContentScriptCollector } from './extension.js';
 import { newHarness, type Harness } from '../tests/harness.js';
 import { stubChrome, type FakeChrome } from '../tests/fakeChrome.js';
 
@@ -185,5 +185,35 @@ describe('forwarding from a content script', () => {
     stubChrome().isWorkerGone = true;
 
     await expect(forwardTrack('link_shared')).resolves.toBeUndefined();
+  });
+});
+
+describe('newContentScriptCollector', () => {
+  it('hands each tracked event to the worker, which tracks it', async () => {
+    const { harness } = startForwarding();
+
+    await newContentScriptCollector().track('link_shared', { target: 'clipboard' });
+    await harness.settle();
+
+    expect(harness.fetch.events.map((event) => [event.name, event.params])).toEqual([
+      ['link_shared', { target: 'clipboard' }],
+    ]);
+  });
+
+  it('sends nothing of its own on flush and touches no storage', async () => {
+    const { chrome, harness } = startForwarding();
+
+    await newContentScriptCollector().flush();
+    await harness.settle();
+
+    expect([harness.fetch.requests, chrome.items.size]).toEqual([[], 0]);
+  });
+
+  it('throws nothing outside an extension or with no worker', async () => {
+    vi.stubGlobal('chrome', undefined);
+
+    await expect(newContentScriptCollector().track('a')).resolves.toBeUndefined();
+    stubChrome().isWorkerGone = true;
+    await expect(newContentScriptCollector().track('a')).resolves.toBeUndefined();
   });
 });
