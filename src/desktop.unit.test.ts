@@ -40,9 +40,19 @@ describe('newDesktopCollector', () => {
       hide(page, event);
 
       // The send delay is 5 seconds, longer than the wait, so only the hide sends.
-      await vi.waitFor(() => expect(fetch.eventNames).toEqual(['report_exported']));
+      await vi.waitFor(() => expect(fetch.eventNames).toEqual(['installed', 'report_exported']));
     },
   );
+
+  it('sends installed on its first start and updated on the first start of another version', async () => {
+    const { fetch } = stubWebview();
+
+    await newDesktopCollector({ ...OPTIONS, mode: 'anonymous' }).flush();
+    await newDesktopCollector({ ...OPTIONS, mode: 'anonymous' }).flush();
+    await newDesktopCollector({ ...OPTIONS, version: '4.3.0', mode: 'anonymous' }).flush();
+
+    expect(fetch.eventNames).toEqual(['installed', 'updated']);
+  });
 
   it('sends its platform and the primary browser language, over localStorage and Web Locks', async () => {
     const { items, lockNames, fetch } = stubWebview();
@@ -73,7 +83,7 @@ describe('newDesktopCollector', () => {
     await usage.track('report_exported');
     await usage.flush();
 
-    const envelope = fetch.requests[0]?.envelope;
+    const envelope = fetch.requests.at(-1)?.envelope;
     expect(envelope).toMatchObject({
       platform: 'windows',
       id: USER_ID,

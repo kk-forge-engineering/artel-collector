@@ -97,6 +97,8 @@ interface Queue {
   /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
   removeIdentified(): Promise<QueuedEnvelope[]>;
   removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
+  /** Resolves to the stored envelopes, oldest first. */
+  envelopes(): Promise<QueuedEnvelope[]>;
   /** Stores a forget request's body, unless it is stored already. */
   addForget(body: string): Promise<void>;
   /** Resolves to the stored forget request bodies, oldest first. */
@@ -295,6 +297,8 @@ export function newQueue({
     },
 
     forgets: readForgets,
+
+    envelopes: read,
 
     removeForget: async (body) => writeForgets((await readForgets()).filter((stored) => stored !== body)),
   };

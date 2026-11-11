@@ -26,6 +26,8 @@ import * as desktop from './desktop.js';
 import type { DesktopCollectorOptions } from './desktop.js';
 import * as extension from './extension.js';
 import type { ExtensionCollectorOptions } from './extension.js';
+import * as testing from './testing.js';
+import type { RecordedEvent, RecordingCollector } from './testing.js';
 import * as web from './web.js';
 import { USER_ID, SITE_KEY } from '../tests/harness.js';
 import type { WebCollectorOptions } from './web.js';
@@ -39,6 +41,9 @@ describe('the public API', () => {
         'ActiveDaysBucket',
         'AnalyticsState',
         'BrowserName',
+        'checkEvent',
+        'checkOptions',
+        'isTestKey',
         'Mode',
         'Platform',
         'detectBrowser',
@@ -52,16 +57,10 @@ describe('the public API', () => {
       new Set(['newLocalStorageAdapter', 'newWebCollector', 'newWebLock', 'pageFields', 'trackPageViews']),
     );
     expect(new Set(Object.keys(extension))).toEqual(
-      new Set([
-        'acceptForwarded',
-        'forwardTrack',
-        'newChromeStorageAdapter',
-        'newContentScriptCollector',
-        'newExtensionCollector',
-        'refreshUninstallUrl',
-      ]),
+      new Set(['forwardTrack', 'newChromeStorageAdapter', 'newContentScriptCollector', 'newExtensionCollector']),
     );
     expect(new Set(Object.keys(desktop))).toEqual(new Set(['newDesktopCollector']));
+    expect(new Set(Object.keys(testing))).toEqual(new Set(['newRecordingCollector', 'queuedEvents']));
   });
 
   it('exports these types', () => {
@@ -84,6 +83,8 @@ describe('the public API', () => {
         NavigatorFields,
         StateOf<'anonymous'>,
         PageFields,
+        RecordedEvent,
+        RecordingCollector,
         StorageAdapter,
         TimerHandle,
         Transport,

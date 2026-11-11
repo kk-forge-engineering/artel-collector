@@ -3,7 +3,7 @@ import { systemClock, type Clock } from './clock.js';
 import { newCollector } from './collector.js';
 import { Mode, type Collector, type CommonOptions, type Delivery, type ModeOptions } from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
-import { eventProblem } from './eventCheck.js';
+import { checkEvent } from './eventCheck.js';
 import { flushOnHide } from './flushOnHide.js';
 import { reportTo } from './hostInput.js';
 import type { StorageAdapter } from './storage.js';
@@ -32,6 +32,11 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
   storage?: StorageAdapter | undefined;
   /** The product version, the manifest's by default. */
   version?: string | undefined;
+  /**
+   * The address of the page Chrome opens when the user removes the extension. The collector sets it with the fields of
+   * `uninstallParams()` in its query at construction and after each `setState`. Left out, the collector sets none.
+   */
+  uninstallPage?: string | undefined;
   /** An extension sends no page. */
   getPage?: never;
 } & Delivery &
@@ -39,8 +44,10 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
 
 /**
  * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
- * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The product
- * builds it at the worker's top level, so the call runs at each worker start.
+ * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The worker's
+ * collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content scripts
+ * forward. Chrome takes these listeners only from the worker's first run, so the product builds it at the worker's top
+ * level. A page's collector sends its queue when the page is hidden.
  */
 export function newExtensionCollector(
   options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
@@ -64,12 +71,57 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
-  const collector =
+  const built =
     options.mode === Mode.Anonymous
       ? newCollector({ ...options, ...defaults })
       : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+  const collector = withUninstallPage(built, options.uninstallPage, options.onError);
+  if (isWorker) {
+    listenAsWorker(collector, options.clock ?? systemClock);
+    return collector;
+  }
   // An extension page is hidden as a tab is. The service worker has no page.
-  return isWorker ? collector : flushOnHide(collector);
+  return flushOnHide(collector);
+}
+
+/**
+ * Registers the worker's listeners: `installed` and `updated` at `onInstalled`, the events content scripts forward, and
+ * an empty `onStartup` listener. Chrome starts a worker with an `onStartup` listener when the browser starts, so the
+ * access level is set again before any page or content script runs.
+ */
+function listenAsWorker(collector: Collector, clock: Clock): void {
+  const { runtime } = chromeApi();
+  runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === 'install') {
+      void collector.installed();
+    } else if (reason === 'update') {
+      void collector.updated();
+    }
+  });
+  runtime.onStartup.addListener(() => undefined);
+  acceptForwarded(collector, clock);
+}
+
+/**
+ * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given. Chrome
+ * keeps the address as it was set, so the query must follow the user's state.
+ */
+function withUninstallPage(
+  collector: Collector,
+  pageUrl: string | undefined,
+  onError: ((error: Error) => void) | undefined,
+): Collector {
+  if (pageUrl === undefined) {
+    return collector;
+  }
+  void refreshUninstallUrl(collector, pageUrl, onError);
+  return {
+    ...collector,
+    setState: async (state) => {
+      await collector.setState(state);
+      await refreshUninstallUrl(collector, pageUrl, onError);
+    },
+  };
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */
@@ -152,9 +204,9 @@ export function newContentScriptCollector(): ContentScriptCollector {
 /**
  * Tracks the events content scripts forward with `forwardTrack`, at most 60 a minute. It takes them only from this
  * extension, and only the product's own events: never a system event of the intake, such as `installed` or
- * `uninstalled`, which a content script has no reason to send. Returns the function that stops it.
+ * `uninstalled`, which a content script has no reason to send.
  */
-export function acceptForwarded(collector: Collector, { clock = systemClock }: { clock?: Clock } = {}): () => void {
+function acceptForwarded(collector: Collector, clock: Clock): void {
   let minuteStart = Number.NEGATIVE_INFINITY;
   let tracked = 0;
   const onMessage: MessageListener = (message, sender) => {
@@ -174,19 +226,17 @@ export function acceptForwarded(collector: Collector, { clock = systemClock }: {
     return undefined;
   };
   chromeApi().runtime.onMessage.addListener(onMessage);
-  return () => chromeApi().runtime.onMessage.removeListener(onMessage);
 }
 
 /**
  * Sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone
- * when `uninstallParams()` resolves to undefined. Chrome keeps the address as it was set, so the service worker calls
- * this on each start and after each change of state. It resolves and never rejects. A failure of `uninstallParams()`
- * goes to the collector's `onError`, and any other failure to its own `onError`.
+ * when `uninstallParams()` resolves to undefined. It resolves and never rejects. `uninstallParams()` reports its own
+ * failure, and any other failure goes to `onError`.
  */
-export async function refreshUninstallUrl(
+async function refreshUninstallUrl(
   collector: Collector,
   pageUrl: string,
-  { onError }: { onError?: (error: Error) => void } = {},
+  onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
   try {
     const url = new URL(pageUrl);
@@ -217,10 +267,9 @@ interface ChromeApi {
     getManifest(): { version: string };
     sendMessage(message: unknown): Promise<unknown>;
     setUninstallURL(url: string): Promise<void>;
-    onMessage: {
-      addListener(listener: MessageListener): void;
-      removeListener(listener: MessageListener): void;
-    };
+    onMessage: { addListener(listener: MessageListener): void };
+    onInstalled: { addListener(listener: (details: { reason: string }) => void): void };
+    onStartup: { addListener(listener: () => void): void };
   };
 }
 
@@ -250,6 +299,6 @@ function isForwarded(message: unknown): message is { name: string; params?: Even
   return (
     typeof name === 'string' &&
     !REFUSED_NAMES.has(name) &&
-    eventProblem(name, Reflect.get(message, 'params')) === undefined
+    checkEvent(name, Reflect.get(message, 'params')) === undefined
   );
 }

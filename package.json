@@ -31,6 +31,10 @@
     "./desktop": {
       "types": "./dist/desktop.d.ts",
       "default": "./dist/desktop.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "publishConfig": {

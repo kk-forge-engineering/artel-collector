@@ -1,13 +1,21 @@
 import { vi } from 'vitest';
+import { newExtensionCollector } from '../src/extension.js';
+import { newHttpTransport, newMemoryStorage, type Collector, type StorageAdapter } from '../src/exports.js';
+import { FakeClock } from './fakeClock.js';
+import { FakeFetch } from './fakeFetch.js';
+import { ENDPOINT, KEY, RETRY_DELAY_MS, SEND_DELAY_MS } from './harness.js';
 
 const EXTENSION_ID = 'faalhcmobmdfdmmniiplhoniamdooejf';
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
+type InstalledListener = (details: { reason: string }) => void;
 
 /** A Chrome extension context in memory: storage, messages between contexts and the uninstall page. */
 export class FakeChrome {
   readonly items = new Map<string, unknown>();
   readonly listeners = new Set<MessageListener>();
+  readonly installedListeners = new Set<InstalledListener>();
+  readonly startupListeners = new Set<() => void>();
   uninstallUrl = '';
   isWorkerGone = false;
   /** The access levels `chrome.storage.local.setAccessLevel` was called with. */
@@ -45,9 +53,21 @@ export class FakeChrome {
     },
     onMessage: {
       addListener: (listener: MessageListener): void => void this.listeners.add(listener),
-      removeListener: (listener: MessageListener): void => void this.listeners.delete(listener),
+    },
+    onInstalled: {
+      addListener: (listener: InstalledListener): void => void this.installedListeners.add(listener),
+    },
+    onStartup: {
+      addListener: (listener: () => void): void => void this.startupListeners.add(listener),
     },
   };
+
+  /** Fires `chrome.runtime.onInstalled`, as Chrome does after an install or an update. */
+  install(reason: 'install' | 'update' | 'chrome_update'): void {
+    for (const listener of this.installedListeners) {
+      listener({ reason });
+    }
+  }
 }
 
 /** Puts a fresh `FakeChrome` in place of the global `chrome`. */
@@ -62,4 +82,48 @@ export function stubServiceWorker(): void {
   const scope = (): undefined => undefined;
   Object.defineProperty(scope, Symbol.hasInstance, { value: () => true });
   vi.stubGlobal('ServiceWorkerGlobalScope', scope);
+}
+
+/** An extension collector over fakes, with the fake Chrome, network and clock it uses. */
+export interface ExtensionHarness {
+  collector: Collector;
+  chrome: FakeChrome;
+  fetch: FakeFetch;
+  clock: FakeClock;
+  errors: Error[];
+  /** Advances the clock past the send delay and the first retry delay, so each queued send runs. */
+  settle: () => Promise<void>;
+}
+
+/**
+ * Builds `newExtensionCollector` in the service worker when `isWorker` is set, and in an extension page otherwise, over
+ * a fake Chrome, a memory storage, a fake network and a fake clock.
+ */
+export function newExtensionHarness({
+  isWorker,
+  uninstallPage,
+  storage = newMemoryStorage(),
+}: {
+  isWorker: boolean;
+  uninstallPage?: string;
+  storage?: StorageAdapter;
+}): ExtensionHarness {
+  if (isWorker) {
+    stubServiceWorker();
+  }
+  const chrome = stubChrome();
+  vi.stubGlobal('navigator', { language: 'pt-BR' });
+  const fetch = new FakeFetch();
+  const clock = new FakeClock('2026-10-29T10:00:00');
+  const errors: Error[] = [];
+  const collector = newExtensionCollector({
+    key: KEY,
+    mode: 'anonymous',
+    storage,
+    clock,
+    transport: newHttpTransport(ENDPOINT, { fetch: fetch.fetch, clock }),
+    onError: (error) => errors.push(error),
+    ...(uninstallPage !== undefined && { uninstallPage }),
+  });
+  return { collector, chrome, fetch, clock, errors, settle: () => clock.advance(SEND_DELAY_MS + RETRY_DELAY_MS) };
 }

@@ -51,40 +51,37 @@ In the `anonymous` state both are cut to the primary language: `pt-BR` goes as `
 
 ## Usage
 
-Each `const usage` line makes a collector. `key`, `version` and `endpoint` are variables of the build, and `getId` returns the user's account id in the identified state.
+One line per context makes its collector. `key`, `version`, `endpoint` and `uninstallPage` are variables of the build, and `getId` returns the user's account id in the identified state.
 
 ```ts
 // a website or a web app
 const usage = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
-const usage = newWebCollector({ key, version, endpoint, mode: 'identified', getId, uiLanguage: settings.language });
-// a site whose paths carry a secret or a person sends the route pattern instead
-const usage = newWebCollector({
-  key,
-  version,
-  endpoint,
-  mode: 'anonymous',
-  getPage: () => ({ page: route.pattern, referrer: document.referrer }),
-});
-
-// a Chrome extension, in the service worker and in each page
-const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous' });
-const usage = newExtensionCollector({ key, endpoint, mode: 'pseudonymous' });
-const usage = newExtensionCollector({ key, endpoint, mode: 'identified', getId });
+// a Chrome extension: the service worker, at its top level
+const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
+// a Chrome extension: each of its pages, such as the popup or the options page
+const usage = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
 // a content script of that extension, which hands its events to the service worker
 const usage = newContentScriptCollector();
-
 // a window of a desktop app, such as a Tauri webview, where `platform` is 'macos', 'windows' or 'linux'
 const usage = newDesktopCollector({ key, version, endpoint, platform, mode: 'anonymous' });
-const usage = newDesktopCollector({ key, version, endpoint, platform, mode: 'identified', getId });
 ```
 
-Then track what the user does, and store their choice when they make it, here in a pseudonymous channel:
+A channel of another mode passes it, and `getId` in the identified mode, such as `mode: 'identified', getId`. A site whose paths carry a secret or a person passes `getPage: () => ({ page: route.pattern, referrer: document.referrer })` to send the route pattern instead.
+
+Then the product tracks what the user does, and stores their choice when they make it, here in a pseudonymous channel:
 
 ```ts
 void usage.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
 void usage.setState(consented ? 'pseudonymous' : 'anonymous');
 void usage.setState('opted_out'); // the user turned usage statistics off
 ```
+
+The collectors do the rest themselves:
+
+- Every page, extension page and desktop window sends its queue when it is hidden, as "Sending" describes.
+- The extension's service worker sends `installed` and `updated` at Chrome's `onInstalled`, tracks the events content scripts forward, and listens to `onStartup`, so Chrome starts the worker with the browser.
+- An extension collector with `uninstallPage` keeps Chrome's uninstall page up to date with the user's state.
+- A desktop window sends `installed` and `updated` when they are due.
 
 `newWebCollector` comes from `@kk-forge/artel-collector/web`, `newExtensionCollector` and `newContentScriptCollector` from `@kk-forge/artel-collector/extension`, `newDesktopCollector` from `@kk-forge/artel-collector/desktop`, and `newCollector` from the main module. Each platform constructor fills in the defaults in the table below and passes the result to `newCollector`. The web and extension constructors set `platform`, and the desktop one takes it. An option left out or `undefined` takes its default. Each constructor takes `mode` as the literal `'anonymous'`, `'pseudonymous'` or `'identified'`, and returns a collector whose `setState` takes only that channel's states. A `mode` known only at run time goes in options typed `CollectorOptions`, `WebCollectorOptions`, `ExtensionCollectorOptions` or `DesktopCollectorOptions` and built per mode, and gives a collector whose `setState` takes every state. `newContentScriptCollector` takes no channel options, as "`@kk-forge/artel-collector/extension`" describes.
 
@@ -100,6 +97,7 @@ Each constructor throws a `TypeError` that names the option when the options wou
 | `uiLanguage`                        | none                             | none                             | none                                  |
 | `getPage`                           | `pageFields`, see below          | not taken                        | not taken                             |
 | `browser`, pseudonymous, identified | `() => detectBrowser(navigator)` | `() => detectBrowser(navigator)` | not taken                             |
+| `uninstallPage`                     | not taken                        | none                             | not taken                             |
 
 ### Options
 
@@ -144,9 +142,9 @@ Each constructor throws a `TypeError` that names the option when the options wou
   - a stored queue that is no JSON list, which the collector reads as empty;
   - a stored retry wait more than 5 minutes ahead or that is no time;
   - a language the collector leaves out, a state `setState` refuses, an id past 64 characters, an id `forget` refuses, a transport status that is no HTTP status, a page the collector leaves out, and a page field that is not a string;
-  - a storage, lock, `getId`, `browser` or `getPage` error, and an extension worker's `setAccessLevel` that fails.
+  - a storage, lock, `getId`, `browser` or `getPage` error, an extension worker's `setAccessLevel` that fails, and an `uninstallPage` that is no URL or that Chrome refuses.
 
-  A request that goes again later, after a network failure, 429 or 5xx, does not reach it. Its envelope reaches it only when a drop rule removes it. These reach no `onError` of the collector: a forwarded event the extension worker refuses or drops, a `forwardTrack` or a content script's `track` that fails, and a failure of `refreshUninstallUrl` outside `uninstallParams()`, which goes to that function's own `onError`.
+  A request that goes again later, after a network failure, 429 or 5xx, does not reach it. Its envelope reaches it only when a drop rule removes it. These reach no `onError` of the collector: a forwarded event the extension worker refuses or drops, and a `forwardTrack` or a content script's `track` that fails.
 
 ### Methods
 
@@ -164,8 +162,8 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
   The collector refuses an event that breaks one of these rules, and `installed`, `updated` and `opted_out`, which only its own methods send. It reports a refused event to `onError`, naming the rule it breaks, and queues none of it. `track` copies the params once, when it is called, so a later change to the object reaches neither the check nor the event. Params whose reading throws, as a getter or a proxy may, go to `onError`, and nothing is recorded. The intake also drops the whole event when a param is off the allowlist or an enum param's value is off its list. The collector does not know the allowlist, so it cannot refuse these.
 
-- `installed()` sends `installed` once per install. A later call sends no event. In the `opted_out` state it sends nothing and marks nothing, so a user who turns analytics back on still sends it.
-- `updated()` sends `updated` when `version` differs from the last version `installed()` or `updated()` stored, or when none is stored. Call it after `installed()`, so that a fresh install does not also count as an update. In the `opted_out` state it sends nothing and marks nothing. A desktop app calls both methods on every start.
+- `installed()` sends `installed` once per install. A later call sends no event. The extension's service worker and `newDesktopCollector` call it and `updated()` themselves, and a website calls it where its product counts an install. In the `opted_out` state it sends nothing and marks nothing, so a user who turns analytics back on still sends it.
+- `updated()` sends `updated` when `version` differs from the last version `installed()` or `updated()` stored, or when none is stored. Call it after `installed()`, so that a fresh install does not also count as an update. In the `opted_out` state it sends nothing and marks nothing.
 - `setState(state)` stores the user's choice and starts a new session, so events from before and after the change share no session. The same state again does nothing.
   - To `opted_out`: stores the state first, then drops the events not sent yet and the last id `getId` gave, and sends one `opted_out`. It goes at once, or at the end of a retry wait that is running. An `opted_out` from an earlier opt-out that has not gone yet stays queued. The `opted_out` goes in an envelope of its own, with no id, no browser, no first-of-period mark and no age, so no count of active users takes it. Its session is new and no other event shares it. A run that stops after storing the state drops the queue on the first call of its next run. If that run stopped before it queued the `opted_out`, none is sent.
   - From `pseudonymous` or `identified`, to any other state: forgets the last id, as `forget(id)` does, and drops the queued events of that state, those waiting for an id included. A change between `pseudonymous` and `identified` thus counts as another user. Leaving `pseudonymous` also deletes the install id. A change to a state without an id stores the state first, and a run that stops after that forgets the last id on the first call of its next run. A change between `pseudonymous` and `identified` forgets the last id first, so a run that stops in between keeps the old state with its id forgotten.
@@ -179,7 +177,7 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
 `detectBrowser(nav)` names the browser from the `userAgentData.brands` and `userAgent` of the `navigator` it is given. It returns `{ name, major }`, where `name` is `chrome`, `edge`, `opera`, `yandex`, `brave`, `firefox` or `safari`, and leaves out a major version outside 1 to 999. Any other browser is `{ name: 'other' }`. Chrome is named only by its brands, since every Chromium browser carries Chrome's User-Agent token. It returns `undefined` when `nav` has neither a Chromium brand nor a User-Agent.
 
-The main module also exports `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`, `newMemoryStorage()`, `systemClock`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `WebCollectorOptions`, `ExtensionCollectorOptions` and `DesktopCollectorOptions` come from their own modules.
+The main module also exports the checks of "Testing", `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`, `newMemoryStorage()`, `systemClock`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `WebCollectorOptions`, `ExtensionCollectorOptions` and `DesktopCollectorOptions` come from their own modules.
 
 ## Sending
 
@@ -238,31 +236,20 @@ For a Chrome extension. Its service worker and its pages each make a collector w
 - `newChromeStorageAdapter()` returns a `storage` over `chrome.storage.local`.
 - `newContentScriptCollector()` returns the collector of a content script, typed `ContentScriptCollector`: `track` and `flush` only. Its `track` is `forwardTrack`, so the worker's collector checks, queues and sends the event under the user's choice, and `flush` does nothing. The user's choice lives in the service worker and the extension pages, so a content script can neither read nor change it, and its types say so. It reads no storage, needs no key, version or endpoint, and never throws.
 - `forwardTrack(name, params?)` hands an event from a content script to the service worker. A content script's own requests carry the page's origin, which the intake refuses. It never rejects. While the worker cannot take the message, as during an update, the event is lost.
-- `acceptForwarded(collector, { clock }?)` tracks, in the service worker, the events content scripts forward, and returns the function that stops it. It takes them only from this extension, and only the product's own events. It refuses every system event of the intake, which the intake counts from any product without its allowlist: `installed`, `updated`, `opted_out`, `uninstalled`, `welcome_opened`, `page_view` and `install_click`. It also refuses each event `track` refuses. A page can open any number of frames that run the content script. So the worker tracks at most 60 forwarded events a minute from all tabs and frames together, and drops the rest. It keeps the count in memory, so a restart of the worker starts it again. `clock` is the time source, as in Options.
-- `refreshUninstallUrl(collector, pageUrl, { onError }?)` sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone when `uninstallParams()` resolves to `undefined`. Chrome keeps the address as it was set, so call it on each start of the worker and after each `setState`. It never rejects. A failure of `uninstallParams()` goes to the collector's `onError`, and any other failure to the function's own `onError`.
+- The service worker's collector tracks the events content scripts forward. It takes them only from this extension, and only the product's own events. It refuses every system event of the intake, which the intake counts from any product without its allowlist: `installed`, `updated`, `opted_out`, `uninstalled`, `welcome_opened`, `page_view` and `install_click`. It also refuses each event `track` refuses. A page can open any number of frames that run the content script. So the worker tracks at most 60 forwarded events a minute from all tabs and frames together, and drops the rest. It keeps the count in memory, so a restart of the worker starts it again.
+- The service worker's collector sends `installed` at Chrome's `onInstalled` with reason `install`, and `updated` with reason `update`. It also adds an empty `onStartup` listener, so Chrome starts the worker with the browser and the worker closes the storage again before content scripts run. Chrome takes these listeners only from the worker's first run, so build the collector at the worker's top level. A product may add `onInstalled` listeners of its own, such as one that opens a welcome page.
+- `uninstallPage`, an option of `newExtensionCollector`: the address Chrome opens when the user removes the extension. The collector sets it with the fields of `uninstallParams()` added to its query, or alone when `uninstallParams()` resolves to `undefined`, at construction and after each `setState`, in the worker and in each page, since Chrome keeps the address as it was set. Left out, the collector sets no uninstall page.
 
 ```ts
 // service worker
-import type { AnalyticsState } from '@kk-forge/artel-collector';
-import { acceptForwarded, newExtensionCollector, refreshUninstallUrl } from '@kk-forge/artel-collector/extension';
+import { newExtensionCollector } from '@kk-forge/artel-collector/extension';
 
-const usage = newExtensionCollector({ key, endpoint, mode: 'identified', getId });
-acceptForwarded(usage);
-const uninstallPage = 'https://example.com/uninstall';
-void refreshUninstallUrl(usage, uninstallPage, { onError: console.error });
-chrome.runtime.onInstalled.addListener(async ({ reason }) => {
-  if (reason === 'install') {
-    await usage.installed();
-  } else if (reason === 'update') {
-    await usage.updated();
-  }
+const usage = newExtensionCollector({
+  key,
+  endpoint,
+  mode: 'anonymous',
+  uninstallPage: 'https://example.com/uninstall',
 });
-
-// wherever the worker stores the user's choice
-async function storeChoice(choice: AnalyticsState): Promise<void> {
-  await usage.setState(choice);
-  await refreshUninstallUrl(usage, uninstallPage, { onError: console.error });
-}
 
 // content script
 import { newContentScriptCollector } from '@kk-forge/artel-collector/extension';
@@ -275,7 +262,7 @@ void usage.track('link_shared', { target: 'clipboard' });
 
 For a window of a desktop app, such as a Tauri webview.
 
-- `newDesktopCollector(options)` makes a collector for a desktop window, as in "Usage". It takes `platform` as `'macos'`, `'windows'` or `'linux'`, the platforms a `desktop` channel takes. Its windows share the webview's `localStorage` through `newLocalStorageAdapter()` and its Web Locks through `newWebLock()`, so they keep one queue and one state. It sends the queue when the window is hidden or closes, as "Sending" describes. It names no browser and sends no page.
+- `newDesktopCollector(options)` makes a collector for a desktop window, as in "Usage". It takes `platform` as `'macos'`, `'windows'` or `'linux'`, the platforms a `desktop` channel takes. Its windows share the webview's `localStorage` through `newLocalStorageAdapter()` and its Web Locks through `newWebLock()`, so they keep one queue and one state. It sends `installed` and `updated` when it is built, each only when due, so every window may build one. It sends the queue when the window is hidden or closes, as "Sending" describes. It names no browser and sends no page.
 
 ## What is sent
 
@@ -334,6 +321,19 @@ The `opted_out` event that `setState('opted_out')` sends:
 ```
 
 The core reads no page, URL or user input. `params`, the account `id` and the page fields carry only what the product passes, and the page fields only as the collector shapes them.
+
+## Testing
+
+`@kk-forge/artel-collector/testing` serves a product's own tests:
+
+- `newRecordingCollector(mode?, { onError }?)` returns a `Collector` that sends nothing and records each event it takes in `events`, as `{ name, params }`. `mode` is the channel mode, `identified` by default, so it takes every state. The user starts in `anonymous`. It refuses an event `track` refuses, and a state above the mode, with the same report to `onError`, so a test catches a bad event name or param. It records nothing in the `opted_out` state, `installed` only once, and `uninstallParams()` resolves to `undefined`.
+- `queuedEvents(storage, key)` resolves to the `{ name, params }` of the events a real collector of channel `key` holds queued in `storage`, oldest first.
+
+The main module exports three checks that read no `chrome`, `navigator` or storage, so a build script or a test can call them:
+
+- `checkOptions({ key, version, platform, endpoint })` throws the `TypeError` a constructor throws for these options, and returns otherwise. It takes `transport` in place of `endpoint` too.
+- `isTestKey(key)` tells whether `key` is a channel's test key, `<kind>-test-<10 characters>`.
+- `checkEvent(name, params)` returns the problem `track` would report for the event, or `undefined` when it takes it.
 
 ## Development
 

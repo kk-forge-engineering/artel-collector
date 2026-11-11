@@ -1,39 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { acceptForwarded, forwardTrack, newContentScriptCollector } from './extension.js';
-import { newHarness, type Harness } from '../tests/harness.js';
-import { stubChrome, type FakeChrome } from '../tests/fakeChrome.js';
+import { forwardTrack, newContentScriptCollector } from './extension.js';
+import { newExtensionHarness, stubChrome, type ExtensionHarness } from '../tests/fakeChrome.js';
 
 const FROM_OTHER_EXTENSION = { id: 'abcdefghijklmnopabcdefghijklmnop' };
 
-/** Starts accepting forwarded events on the harness clock, which the limit counts its minutes by. */
-function startForwarding(): { chrome: FakeChrome; harness: Harness } {
-  const chrome = stubChrome();
-  const harness = newHarness();
-  acceptForwarded(harness.collector, { clock: harness.clock });
-  return { chrome, harness };
+/** Builds the service worker's collector, which accepts forwarded events and counts the limit's minutes by its clock. */
+function startForwarding(): { chrome: ExtensionHarness['chrome']; harness: ExtensionHarness } {
+  const harness = newExtensionHarness({ isWorker: true });
+  return { chrome: harness.chrome, harness };
 }
 
-function timesTracked(harness: Harness, name: string): number {
+function timesTracked(harness: ExtensionHarness, name: string): number {
   return harness.fetch.eventNames.filter((eventName) => eventName === name).length;
 }
 
 describe('forwarding from a content script', () => {
-  it('tracks a forwarded event in the worker, and nothing once stopped', async () => {
-    stubChrome();
-    const harness = newHarness();
-    const stop = acceptForwarded(harness.collector);
-
-    await forwardTrack('link_shared', { target: 'clipboard' });
-    await harness.settle();
-    stop();
-    await forwardTrack('link_opened');
-    await harness.settle();
-
-    expect(harness.fetch.events.map((event) => [event.name, event.params])).toEqual([
-      ['link_shared', { target: 'clipboard' }],
-    ]);
-  });
-
   // The worker refuses these names, the intake's `system_events`. The intake takes them from every product and skips
   // the product's allowlist, so a content script could send them past that check.
   it.each(['installed', 'updated', 'uninstalled', 'welcome_opened', 'opted_out', 'page_view', 'install_click'])(
@@ -68,9 +49,7 @@ describe('forwarding from a content script', () => {
       },
     ],
   ])('ignores a message with %s', async (_, message) => {
-    const chrome = stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
+    const { chrome, harness } = startForwarding();
 
     await chrome.runtime.sendMessage(message);
     await harness.settle();
@@ -79,9 +58,7 @@ describe('forwarding from a content script', () => {
   });
 
   it('tracks a forwarded event at the limits of a product event list', async () => {
-    stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
+    const { harness } = startForwarding();
     const params = Object.fromEntries(Array.from({ length: 15 }, (_, index) => [`p${index}`, index]));
     // The test uses 64 characters outside the basic plane, 128 UTF-16 units. The intake counts characters, so this
     // string is still at its limit.
@@ -171,9 +148,7 @@ describe('forwarding from a content script', () => {
   });
 
   it('ignores a message from another extension', async () => {
-    const chrome = stubChrome();
-    const harness = newHarness();
-    acceptForwarded(harness.collector);
+    const { chrome, harness } = startForwarding();
 
     await chrome.runtime.sendMessage({ type: 'artel.track', name: 'a' }, FROM_OTHER_EXTENSION);
     await harness.settle();

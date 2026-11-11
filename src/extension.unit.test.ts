@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { newChromeStorageAdapter, newExtensionCollector, refreshUninstallUrl } from './extension.js';
-import { AnalyticsState, newMemoryStorage } from './exports.js';
+import { newChromeStorageAdapter, newExtensionCollector } from './extension.js';
+import { newMemoryStorage } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
-import { ENDPOINT, KEY, newHarness, USER_ID } from '../tests/harness.js';
+import { ENDPOINT, KEY, USER_ID } from '../tests/harness.js';
 import { stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
-import { fromUntypedHost } from '../tests/untypedHost.js';
 import { hide, stubHideablePage } from '../tests/fakePage.js';
 
 describe('newChromeStorageAdapter', () => {
@@ -352,94 +351,5 @@ describe('the access level of chrome.storage.local', () => {
     expect(errors).toEqual([
       new TypeError('artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it'),
     ]);
-  });
-});
-
-describe('refreshUninstallUrl', () => {
-  it('sets the uninstall page with the uninstall parameters, keeping its own query', async () => {
-    const chrome = stubChrome();
-    const harness = newHarness();
-
-    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall?product=demo');
-
-    const url = new URL(chrome.uninstallUrl);
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      product: 'demo',
-      platform: 'extension',
-      version: '4.2.0',
-      browser_language: 'pt',
-      ui_language: 'zh',
-      age_days: '0',
-      active_days: '0',
-    });
-  });
-
-  it('sets the uninstall page without a query of its own in the opted_out state', async () => {
-    const chrome = stubChrome();
-    const harness = newHarness({ state: AnalyticsState.OptedOut });
-
-    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall');
-
-    expect(chrome.uninstallUrl).toBe('https://example.com/uninstall');
-  });
-
-  it('reports a failure to onError and resolves', async () => {
-    stubChrome();
-    const harness = newHarness();
-    const errors: Error[] = [];
-
-    await expect(
-      refreshUninstallUrl(harness.collector, 'not a url', { onError: (error) => errors.push(error) }),
-    ).resolves.toBeUndefined();
-
-    expect(errors).toHaveLength(1);
-  });
-
-  it('reports a failure that is not an Error as an Error', async () => {
-    const chrome = stubChrome();
-    chrome.runtime.setUninstallURL = async () => {
-      throw fromUntypedHost<Error>('quota');
-    };
-    const harness = newHarness();
-    const errors: Error[] = [];
-
-    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall', {
-      onError: (error) => errors.push(error),
-    });
-
-    expect(errors).toEqual([new Error('quota')]);
-  });
-
-  it('resolves when its own onError throws', async () => {
-    stubChrome();
-    const harness = newHarness();
-
-    await expect(
-      refreshUninstallUrl(harness.collector, 'not a url', {
-        onError: () => {
-          throw new Error('handler');
-        },
-      }),
-    ).resolves.toBeUndefined();
-  });
-
-  it('sets pageUrl alone when uninstallParams fails, which only the collector reports', async () => {
-    const chrome = stubChrome();
-    const harness = newHarness({
-      storage: {
-        get: async () => {
-          throw new Error('storage down');
-        },
-        set: async () => undefined,
-      },
-    });
-    const errors: Error[] = [];
-
-    await refreshUninstallUrl(harness.collector, 'https://example.com/uninstall', {
-      onError: (error) => errors.push(error),
-    });
-
-    expect(chrome.uninstallUrl).toBe('https://example.com/uninstall');
-    expect([harness.errors, errors]).toEqual([[new Error('storage down')], []]);
   });
 });

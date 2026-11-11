@@ -14,7 +14,7 @@ import {
 import { systemClock } from './clock.js';
 import { newChannelStorage } from './storage.js';
 import { AnalyticsState, Mode, type Collector, type CollectorOptions } from './collectorTypes.js';
-import { copyOfParams, eventProblem } from './eventCheck.js';
+import { acceptedEvent } from './eventCheck.js';
 import { newInstallState } from './installState.js';
 import { exclusive } from './lock.js';
 import { newOutbox } from './outbox.js';
@@ -310,20 +310,12 @@ export function newCollector(options: CollectorOptions): Collector {
 
   const collector: Collector = {
     track: async (name, given) => {
-      let params: EventParams | undefined;
-      try {
-        params = copyOfParams(given);
-      } catch (error) {
-        reportError(error);
-        return;
-      }
-      const problem = eventProblem(name, params);
-      if (problem !== undefined) {
-        reportError(new Error(`artel: event ${quoted(name)} ${problem}, so it was not tracked`));
+      const event = acceptedEvent(name, given, reportError);
+      if (event === undefined) {
         return;
       }
       const page = pageOf(name);
-      await serialize(async () => record({ name, params, page }), false);
+      await serialize(async () => record({ name, params: event.params, page }), false);
     },
 
     // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.

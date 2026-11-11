@@ -16,6 +16,8 @@ export {
   type UninstallParams,
 } from './collectorTypes.js';
 export { Platform, type EventParams } from './envelope.js';
+export { checkEvent } from './eventCheck.js';
+export { checkOptions, isTestKey } from './hostInput.js';
 export { newMemoryStorage, type StorageAdapter } from './storage.js';
 export { newHttpTransport, type Transport, type TransportResult } from './transport.js';
 export type { Lock } from './lock.js';
