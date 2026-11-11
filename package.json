@@ -42,7 +42,7 @@
     "lint": "npm run lint:tsc && npm run lint:oxlint && npm run lint:format",
     "lint:fix": "npm run lint:oxlint:fix && npm run lint:format:fix",
     "lint:tsc": "tsc",
-    "lint:oxlint": "oxlint --type-aware src tests",
+    "lint:oxlint": "oxlint --type-aware --deny-warnings src tests",
     "lint:oxlint:fix": "oxlint --type-aware --fix src tests",
     "lint:format": "oxfmt --check .",
     "lint:format:fix": "oxfmt .",
