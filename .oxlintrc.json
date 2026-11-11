@@ -1,19 +1,10 @@
 {
+  "extends": ["./node_modules/@kk-forge/oxlint-config/base.json"],
   "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "vitest"],
   "categories": {
-    "correctness": "error",
     "suspicious": "error"
   },
   "rules": {
-    "typescript/no-explicit-any": "error",
-    "typescript/ban-ts-comment": "error",
-    "typescript/no-non-null-assertion": "error",
-    "typescript/switch-exhaustiveness-check": "error",
-    "typescript/no-floating-promises": "error",
-    "typescript/no-misused-promises": "error",
-    "prefer-const": ["error", { "ignoreReadBeforeAssign": true }],
-    "no-var": "error",
-    "import/no-cycle": "error",
     "unicorn/no-null": "error",
     "typescript/consistent-return": "off",
     "unicorn/consistent-function-scoping": "off"
