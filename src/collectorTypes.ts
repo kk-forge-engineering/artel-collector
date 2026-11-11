@@ -18,7 +18,7 @@ export const Mode = {
 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
-/** What the collector sends for this user, a choice the collector stores. Every user starts anonymous. */
+/** The user's analytics state, which the collector stores and which decides what it sends. Users start anonymous. */
 export const AnalyticsState = {
   /** Sends nothing. Switching to it sends one `opted_out`, with no id or browser, and drops what was not sent. */
   OptedOut: 'opted_out',
@@ -182,11 +182,11 @@ export interface Collector<M extends Mode = Mode> {
    */
   updated(): Promise<void>;
   /**
-   * Stores the user's choice and starts a new session. Switching to `opted_out` drops what was not sent, except an
-   * earlier `opted_out`, and sends one `opted_out`, at once or at the end of a retry wait that is running. Switching
-   * from `pseudonymous` or `identified` forgets the last id, as `forget` does, and drops the queued events that wait
-   * for an id. Switching from `pseudonymous` also deletes the install id. A dropped event that no request carried gives
-   * back its marks. The same state again does nothing.
+   * Stores the user's analytics state and starts a new session. Switching to `opted_out` drops what was not sent,
+   * except an earlier `opted_out`, and sends one `opted_out`, at once or at the end of a retry wait that is running.
+   * Switching from `pseudonymous` or `identified` forgets the last id, as `forget` does, and drops the queued events
+   * that wait for an id. Switching from `pseudonymous` also deletes the install id. A dropped event that no request
+   * carried gives back its marks. The same state again does nothing.
    */
   setState(state: StateOf<M>): Promise<void>;
   /**

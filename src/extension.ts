@@ -52,10 +52,10 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
 
 /**
  * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
- * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The worker's
- * collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content scripts
- * forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of the
- * worker, so the product builds it there. A page's collector sends its queue when the page is hidden.
+ * closes the storage to content scripts, which could otherwise change the user's analytics state and the queue. The
+ * worker's collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content
+ * scripts forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of
+ * the worker, so the product builds it there. A page's collector sends its queue when the page is hidden.
  */
 export function newExtensionCollector<M extends Mode>(options: ExtensionCollectorOptions & { mode: M }): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
@@ -210,13 +210,14 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
   }
 }
 
-/** The part of the collector a content script uses: it tracks events, and the worker keeps the user's choice. */
+/** The part of the collector a content script uses: it tracks events, and the worker keeps the analytics state. */
 export type ContentScriptCollector = Pick<Collector, 'track'>;
 
 /**
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
- * and the worker's collector checks, queues and sends it under the user's choice. The user's choice lives in the worker and the extension pages, so a content script can neither read nor change it. It
- * reads no storage, needs no key, version or endpoint, and never throws.
+ * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
+ * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
+ * key, version or endpoint, and never throws.
  */
 export function newContentScriptCollector(): ContentScriptCollector {
   return { track: forwardTrack };
@@ -258,8 +259,8 @@ function acceptForwarded(collector: Collector, clock: Clock, onError: ((error: E
 }
 
 /**
- * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It resolves
- * and never rejects: a failure goes to `onError`.
+ * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It
+ * resolves and never rejects: a failure goes to `onError`.
  */
 async function setUninstallUrl(
   pageUrl: string,

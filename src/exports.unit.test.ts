@@ -257,7 +257,7 @@ describe('the public API', () => {
     } as const).not.toExtend<DesktopCollectorOptions>();
   });
 
-  it("gives a content script only track, so it can neither read nor change the user's choice", () => {
+  it("gives a content script only track, so it can neither read nor change the user's analytics state", () => {
     expectTypeOf<keyof extension.ContentScriptCollector>().toEqualTypeOf<'track'>();
     expectTypeOf(extension.newContentScriptCollector()).toEqualTypeOf<extension.ContentScriptCollector>();
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('setState');
