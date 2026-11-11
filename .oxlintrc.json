@@ -1,12 +1,3 @@
 {
-  "extends": ["./node_modules/@kk-forge/oxlint-config/base.json"],
-  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "vitest"],
-  "categories": {
-    "suspicious": "error"
-  },
-  "rules": {
-    "unicorn/no-null": "error",
-    "typescript/consistent-return": "off",
-    "unicorn/consistent-function-scoping": "off"
-  }
+  "extends": ["./node_modules/@kk-forge/oxlint-config/base.json"]
 }
