@@ -7,16 +7,17 @@ export interface TransportResult {
 }
 
 /**
- * Sends one envelope and resolves to the intake's answer or its HTTP status. It must resolve within 30 seconds. After
- * 35 seconds the outbox counts it as status 0 and sends the envelope again. The intake keeps a forgotten user's events
- * from a request that arrives over a minute after the forget.
+ * Sends one request body and resolves to the intake's answer or its HTTP status. The body is an envelope, for the
+ * intake's `/v1/public/relay`, or a forget request `{ key, id }` without `events`, for its `/v1/public/forget`. It must
+ * resolve within 30 seconds. After 35 seconds the outbox counts it as status 0 and sends the body again. The intake
+ * keeps a forgotten user's events from a request that arrives over a minute after the forget.
  */
 export type Transport = (body: string) => Promise<number | TransportResult>;
 
 const TIMEOUT_MS = 30_000;
 
 /**
- * Returns a transport that posts each envelope to `endpoint` with `fetch`, the host's own by default. The transport
+ * Returns a transport that posts each body to `endpoint` with `fetch`, the host's own by default. The transport
  * resolves to the status and the raw `Retry-After` header, or to status 0 when a request fails or takes over 30
  * seconds.
  */

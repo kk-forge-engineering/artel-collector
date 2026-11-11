@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import * as core from './exports.js';
 import type {
   ActiveDaysBucket,
+  AnalyticsState,
   Browser,
   Clock,
   Collector,
@@ -25,6 +26,8 @@ import * as desktop from './desktop.js';
 import type { DesktopCollectorOptions } from './desktop.js';
 import * as extension from './extension.js';
 import type { ExtensionCollectorOptions } from './extension.js';
+import * as testing from './testing.js';
+import type { RecordedEvent, RecordingCollector } from './testing.js';
 import * as web from './web.js';
 import { USER_ID, SITE_KEY } from '../tests/harness.js';
 import type { WebCollectorOptions } from './web.js';
@@ -38,6 +41,9 @@ describe('the public API', () => {
         'ActiveDaysBucket',
         'AnalyticsState',
         'BrowserName',
+        'checkEvent',
+        'checkOptions',
+        'isTestKey',
         'Mode',
         'Platform',
         'detectBrowser',
@@ -48,26 +54,13 @@ describe('the public API', () => {
       ]),
     );
     expect(new Set(Object.keys(web))).toEqual(
-      new Set([
-        'flushWhenHidden',
-        'newLocalStorageAdapter',
-        'newWebCollector',
-        'newWebLock',
-        'pageFields',
-        'trackPageViews',
-      ]),
+      new Set(['newLocalStorageAdapter', 'newWebCollector', 'newWebLock', 'pageFields', 'trackPageViews']),
     );
     expect(new Set(Object.keys(extension))).toEqual(
-      new Set([
-        'acceptForwarded',
-        'forwardTrack',
-        'newChromeStorageAdapter',
-        'newContentScriptCollector',
-        'newExtensionCollector',
-        'refreshUninstallUrl',
-      ]),
+      new Set(['forwardTrack', 'newChromeStorageAdapter', 'newContentScriptCollector', 'newExtensionCollector']),
     );
     expect(new Set(Object.keys(desktop))).toEqual(new Set(['newDesktopCollector']));
+    expect(new Set(Object.keys(testing))).toEqual(new Set(['newRecordingCollector', 'queuedEvents']));
   });
 
   it('exports these types', () => {
@@ -90,6 +83,8 @@ describe('the public API', () => {
         NavigatorFields,
         StateOf<'anonymous'>,
         PageFields,
+        RecordedEvent,
+        RecordingCollector,
         StorageAdapter,
         TimerHandle,
         Transport,
@@ -118,7 +113,7 @@ describe('the public API', () => {
     >();
   });
 
-  it('takes an id and a browser only in an identified channel, and a browser only from a web or extension product', () => {
+  it('takes getId only in an identified channel, and a browser only with an id and from a web or extension product', () => {
     const base = { key: SITE_KEY, version: '1.0.0', storage: core.newMemoryStorage(), endpoint: 'https://x' };
     const getId = (): string => USER_ID;
     const browser = { name: 'chrome', major: 131 } as const;
@@ -131,8 +126,11 @@ describe('the public API', () => {
       getId,
       browser,
     } as const).toExtend<CollectorOptions>();
+    expectTypeOf({ ...base, platform: 'web', mode: 'pseudonymous', browser } as const).toExtend<CollectorOptions>();
+    expectTypeOf({ ...base, platform: 'macos', mode: 'pseudonymous' } as const).toExtend<CollectorOptions>();
     expectTypeOf({ ...base, platform: 'macos', mode: 'identified', getId } as const).toExtend<CollectorOptions>();
     expectTypeOf({ ...base, platform: 'web', mode: 'anonymous', getId } as const).not.toExtend<CollectorOptions>();
+    expectTypeOf({ ...base, platform: 'web', mode: 'pseudonymous', getId } as const).not.toExtend<CollectorOptions>();
     expectTypeOf({ ...base, platform: 'web', mode: 'anonymous', browser } as const).not.toExtend<CollectorOptions>();
     expectTypeOf({ ...base, platform: 'web', mode: 'identified' } as const).not.toExtend<CollectorOptions>();
     expectTypeOf({
@@ -140,6 +138,12 @@ describe('the public API', () => {
       platform: 'macos',
       mode: 'identified',
       getId,
+      browser,
+    } as const).not.toExtend<CollectorOptions>();
+    expectTypeOf({
+      ...base,
+      platform: 'macos',
+      mode: 'pseudonymous',
       browser,
     } as const).not.toExtend<CollectorOptions>();
   });
@@ -195,28 +199,42 @@ describe('the public API', () => {
     expectTypeOf(options).not.toExtend<CollectorOptions>();
   });
 
-  it('lets only a collector of an identified channel take the identified state', () => {
+  it('lets a collector take only the states up to its channel mode', () => {
     expectTypeOf<Parameters<Collector<'identified'>['setState']>[0]>().toEqualTypeOf<
-      'opted_out' | 'anonymous' | 'identified'
+      'opted_out' | 'anonymous' | 'pseudonymous' | 'identified'
+    >();
+    expectTypeOf<Parameters<Collector<'pseudonymous'>['setState']>[0]>().toEqualTypeOf<
+      'opted_out' | 'anonymous' | 'pseudonymous'
     >();
     expectTypeOf<Parameters<Collector<'anonymous'>['setState']>[0]>().toEqualTypeOf<'opted_out' | 'anonymous'>();
-    const anonymous = core.newCollector({
-      key: SITE_KEY,
-      platform: 'web',
-      version: '1.0.0',
-      storage: core.newMemoryStorage(),
-      endpoint: 'https://x',
-      mode: 'anonymous',
-    });
+    expectTypeOf<StateOf<'identified'>>().toEqualTypeOf<AnalyticsState>();
+    expectTypeOf<StateOf<'pseudonymous'>>().toEqualTypeOf<'opted_out' | 'anonymous' | 'pseudonymous'>();
+    expectTypeOf<StateOf<'anonymous'>>().toEqualTypeOf<'opted_out' | 'anonymous'>();
+    const options = { key: SITE_KEY, platform: 'web', version: '1.0.0', storage: core.newMemoryStorage() } as const;
+    const anonymous = core.newCollector({ ...options, endpoint: 'https://x', mode: 'anonymous' });
+    const pseudonymous = core.newCollector({ ...options, endpoint: 'https://x', mode: 'pseudonymous' });
     expectTypeOf(anonymous).toEqualTypeOf<Collector<'anonymous'>>();
+    expectTypeOf(pseudonymous).toEqualTypeOf<Collector<'pseudonymous'>>();
+    // The functions are never called: a platform constructor reads its host's globals.
+    const platformBase = { key: SITE_KEY, version: '1.0.0', endpoint: 'https://x', mode: 'pseudonymous' } as const;
+    expectTypeOf(() => web.newWebCollector(platformBase)).returns.toEqualTypeOf<Collector<'pseudonymous'>>();
+    expectTypeOf(() => extension.newExtensionCollector(platformBase)).returns.toEqualTypeOf<
+      Collector<'pseudonymous'>
+    >();
+    expectTypeOf(() => desktop.newDesktopCollector({ ...platformBase, platform: 'linux' })).returns.toEqualTypeOf<
+      Collector<'pseudonymous'>
+    >();
   });
 
   it('takes a mode known only at run time on every platform constructor', () => {
-    // The last overload is the one a mode known only at run time takes.
-    expectTypeOf<Parameters<typeof core.newCollector>[0]>().toEqualTypeOf<CollectorOptions>();
-    expectTypeOf<Parameters<typeof web.newWebCollector>[0]>().toEqualTypeOf<WebCollectorOptions>();
-    expectTypeOf<Parameters<typeof extension.newExtensionCollector>[0]>().toEqualTypeOf<ExtensionCollectorOptions>();
-    expectTypeOf<Parameters<typeof desktop.newDesktopCollector>[0]>().toEqualTypeOf<DesktopCollectorOptions>();
+    expectTypeOf((options: CollectorOptions) => core.newCollector(options)).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: WebCollectorOptions) => web.newWebCollector(options)).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: ExtensionCollectorOptions) =>
+      extension.newExtensionCollector(options),
+    ).returns.toEqualTypeOf<Collector>();
+    expectTypeOf((options: DesktopCollectorOptions) =>
+      desktop.newDesktopCollector(options),
+    ).returns.toEqualTypeOf<Collector>();
   });
 
   it('takes only a desktop platform, and no browser or page, in desktop options', () => {
@@ -239,7 +257,8 @@ describe('the public API', () => {
     } as const).not.toExtend<DesktopCollectorOptions>();
   });
 
-  it("gives a content script only track and flush, so it can neither read nor change the user's choice", () => {
+  it("gives a content script only track, so it can neither read nor change the user's analytics state", () => {
+    expectTypeOf<keyof extension.ContentScriptCollector>().toEqualTypeOf<'track'>();
     expectTypeOf(extension.newContentScriptCollector()).toEqualTypeOf<extension.ContentScriptCollector>();
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('setState');
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('getState');

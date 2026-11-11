@@ -23,20 +23,20 @@ export type DesktopCollectorOptions = Omit<CommonOptions, 'storage'> & {
 /**
  * Returns a collector for a window of a desktop app, such as a Tauri webview. Its windows share the webview's
  * `localStorage` and Web Locks, so they keep one queue and one state. It sends the user's language from
- * `navigator.language`. The app passes its own `uiLanguage`.
+ * `navigator.language`. The app passes its own `uiLanguage`. It sends `installed` and `updated` itself when they are
+ * due.
  */
-export function newDesktopCollector(
-  options: DesktopCollectorOptions & { mode: typeof Mode.Identified },
-): Collector<'identified'>;
-export function newDesktopCollector(
-  options: DesktopCollectorOptions & { mode: typeof Mode.Anonymous },
-): Collector<'anonymous'>;
-export function newDesktopCollector(options: DesktopCollectorOptions): Collector;
+export function newDesktopCollector<M extends Mode>(options: DesktopCollectorOptions & { mode: M }): Collector<M>;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector {
-  return newCollector({
+  const collector = newCollector({
     ...options,
     storage: options.storage ?? newLocalStorageAdapter(),
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   });
+  // A desktop app has no install event, so each start marks the install and the version. Both send once under the
+  // lock, so every window may build a collector. The collector runs its calls in this order.
+  void collector.installed();
+  void collector.updated();
+  return collector;
 }

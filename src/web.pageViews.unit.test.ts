@@ -3,7 +3,7 @@ import { newWebCollector, trackPageViews } from './web.js';
 import { newMemoryStorage, Platform } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
 import { ENDPOINT, SITE_KEY, newHarness, storageKey } from '../tests/harness.js';
-import { newPageHarness, pageViews, stubPage } from '../tests/fakePage.js';
+import { FakeDocument, newPageHarness, pageViews, stubPage } from '../tests/fakePage.js';
 
 /** Returns a harness of a site whose `getPage` gives a page that is no URL for each path under `/bad`. */
 function newUnreadablePageHarness(): ReturnType<typeof newHarness> {
@@ -239,7 +239,7 @@ describe('newWebCollector page fields', () => {
 
   it('sends no referring host for a load that came from no other site', async () => {
     const fetch = stubSite();
-    vi.stubGlobal('document', { referrer: '' });
+    vi.stubGlobal('document', new FakeDocument(''));
     const usage = newWebCollector({
       key: SITE_KEY,
       version: '1.0.0',

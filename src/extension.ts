@@ -1,10 +1,19 @@
 import { detectBrowser } from './browser.js';
 import { systemClock, type Clock } from './clock.js';
-import { newCollector } from './collector.js';
-import { Mode, type Collector, type CommonOptions, type Delivery, type ModeOptions } from './collectorTypes.js';
+import { newCollector, sendDelayMsOf } from './collector.js';
+import {
+  AnalyticsState,
+  Mode,
+  type Collector,
+  type CommonOptions,
+  type Delivery,
+  type ModeOptions,
+  type UninstallParams,
+} from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
-import { eventProblem } from './eventCheck.js';
+import { checkEvent } from './eventCheck.js';
 import { reportTo } from './hostInput.js';
+import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
 
@@ -31,6 +40,11 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
   storage?: StorageAdapter | undefined;
   /** The product version, the manifest's by default. */
   version?: string | undefined;
+  /**
+   * The address of the page Chrome opens when the user removes the extension. The collector sets it with the fields of
+   * `uninstallParams()` in its query at construction and after each `setState`. Left out, the collector sets none.
+   */
+  uninstallPage?: string | undefined;
   /** An extension sends no page. */
   getPage?: never;
 } & Delivery &
@@ -38,18 +52,16 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
 
 /**
  * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
- * closes the storage to content scripts, which could otherwise change the user's choice and the queue. The product
- * builds it at the worker's top level, so the call runs at each worker start.
+ * closes the storage to content scripts, which could otherwise change the user's analytics state and the queue. The
+ * worker's collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content
+ * scripts forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of
+ * the worker, so the product builds it there. The worker's collector also sends what the pages queue, even after the
+ * page closed.
  */
-export function newExtensionCollector(
-  options: ExtensionCollectorOptions & { mode: typeof Mode.Identified },
-): Collector<'identified'>;
-export function newExtensionCollector(
-  options: ExtensionCollectorOptions & { mode: typeof Mode.Anonymous },
-): Collector<'anonymous'>;
-export function newExtensionCollector(options: ExtensionCollectorOptions): Collector;
+export function newExtensionCollector<M extends Mode>(options: ExtensionCollectorOptions & { mode: M }): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
-  const closed = isServiceWorker() ? closeToContentScripts(options.onError) : Promise.resolve();
+  const isWorker = isServiceWorker();
+  const closed = isWorker ? closeToContentScripts(options.onError) : Promise.resolve();
   const defaults = {
     platform: Platform.Extension,
     // The function reads each default only when the caller leaves the option out, so outside an extension it needs only
@@ -59,9 +71,118 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
-  return options.mode === Mode.Identified
-    ? newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) })
-    : newCollector({ ...options, ...defaults });
+  const built =
+    options.mode === Mode.Anonymous
+      ? newCollector({ ...options, ...defaults })
+      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+  const collector = withUninstallPage(built, options.uninstallPage, options.onError);
+  if (isWorker) {
+    listenAsWorker(collector, {
+      queueKey: `artel.${options.key}.${QUEUE_KEY}`,
+      sendDelayMs: sendDelayMsOf(options),
+      clock: options.clock ?? systemClock,
+      onError: options.onError,
+    });
+  }
+  return collector;
+}
+
+/**
+ * Registers the worker's listeners: `installed` and `updated` at `onInstalled`, the events content scripts forward, the
+ * events pages queue, and an empty `onStartup` listener. Chrome starts a worker with an `onStartup` listener when the
+ * browser starts, so the access level is set again before any page or content script runs.
+ */
+function listenAsWorker(
+  collector: Collector,
+  {
+    queueKey,
+    sendDelayMs,
+    clock,
+    onError,
+  }: {
+    /** The storage key of this channel's queue. */
+    queueKey: string;
+    sendDelayMs: number;
+    clock: Clock;
+    onError: ((error: Error) => void) | undefined;
+  },
+): void {
+  const { runtime, storage } = chromeApi();
+  // A page's own send cannot finish once the page closes, as when a popup closes right after an event. The worker
+  // sends what pages queue within the send delay. Its own sends add no event to the queue, so they schedule nothing.
+  let isSendScheduled = false;
+  storage.onChanged.addListener((changes, area) => {
+    const change = changes[queueKey];
+    if (area !== 'local' || change === undefined || isSendScheduled || !addsEvents(change)) {
+      return;
+    }
+    isSendScheduled = true;
+    clock.setTimeout(() => {
+      isSendScheduled = false;
+      void collector.flush();
+    }, sendDelayMs);
+  });
+  runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === 'install') {
+      void collector.installed();
+    } else if (reason === 'update') {
+      void collector.updated();
+    }
+  });
+  runtime.onStartup.addListener(() => undefined);
+  acceptForwarded(collector, clock, onError);
+}
+
+/**
+ * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given. Chrome
+ * keeps the address as it was set, so the query must follow the user's state.
+ */
+function withUninstallPage(
+  collector: Collector,
+  pageUrl: string | undefined,
+  onError: ((error: Error) => void) | undefined,
+): Collector {
+  if (pageUrl === undefined) {
+    return collector;
+  }
+  // Every write of this context goes in turn on one chain. A write that started before the latest `setState` is
+  // dropped, so a slow refresh never puts back the fields of a state the user has left.
+  let writes = Promise.resolve();
+  let changes = 0;
+  const write = (params: () => Promise<UninstallParams | undefined>): Promise<void> => {
+    const startedAt = changes;
+    const earlier = writes;
+    writes = (async () => {
+      await earlier;
+      const fields = await params();
+      if (startedAt === changes) {
+        await setUninstallUrl(pageUrl, fields, onError);
+      }
+    })();
+    return writes;
+  };
+  const refresh = (): Promise<void> => write(() => collector.uninstallParams());
+  void refresh();
+  return {
+    ...collector,
+    setState: async (state) => {
+      changes++;
+      if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
+        // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the page
+        // must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
+        await write(async () => undefined);
+      }
+      await collector.setState(state);
+      await refresh();
+    },
+  };
+}
+
+/** Tells whether a change of the stored queue adds an event to it, as a new envelope or one more event of an envelope. */
+function addsEvents({ oldValue, newValue }: { oldValue?: unknown; newValue?: unknown }): boolean {
+  const queueOf = (value: unknown): QueuedEnvelope[] => parseQueue(typeof value === 'string' ? value : undefined) ?? [];
+  const before = new Map(queueOf(oldValue).map(({ qid, envelope }) => [qid, envelope.events.length]));
+  return queueOf(newValue).some(({ qid, envelope }) => envelope.events.length > (before.get(qid) ?? 0));
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */
@@ -128,25 +249,26 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
   }
 }
 
-/** The part of the collector a content script uses: it tracks events, and the worker keeps the user's choice. */
-export type ContentScriptCollector = Pick<Collector, 'track' | 'flush'>;
+/** The part of the collector a content script uses: it tracks events, and the worker keeps the analytics state. */
+export type ContentScriptCollector = Pick<Collector, 'track'>;
 
 /**
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
- * and the worker's collector checks, queues and sends it under the user's choice, so `flush` does nothing here. The
- * user's choice lives in the worker and the extension pages, so a content script can neither read nor change it. It
- * reads no storage, needs no key, version or endpoint, and never throws.
+ * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
+ * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
+ * key, version or endpoint, and never throws.
  */
 export function newContentScriptCollector(): ContentScriptCollector {
-  return { track: forwardTrack, flush: async () => undefined };
+  return { track: forwardTrack };
 }
 
 /**
  * Tracks the events content scripts forward with `forwardTrack`, at most 60 a minute. It takes them only from this
  * extension, and only the product's own events: never a system event of the intake, such as `installed` or
- * `uninstalled`, which a content script has no reason to send. Returns the function that stops it.
+ * `uninstalled`, which a content script has no reason to send. The limit guards the queue against a flood, and the
+ * first event it drops in a minute goes to `onError`, so the drop is not silent.
  */
-export function acceptForwarded(collector: Collector, { clock = systemClock }: { clock?: Clock } = {}): () => void {
+function acceptForwarded(collector: Collector, clock: Clock, onError: ((error: Error) => void) | undefined): void {
   let minuteStart = Number.NEGATIVE_INFINITY;
   let tracked = 0;
   const onMessage: MessageListener = (message, sender) => {
@@ -160,29 +282,32 @@ export function acceptForwarded(collector: Collector, { clock = systemClock }: {
       tracked = 0;
     }
     if (tracked < FORWARDS_PER_MINUTE) {
-      tracked++;
       void collector.track(message.name, message.params);
+    } else if (tracked === FORWARDS_PER_MINUTE) {
+      reportTo(
+        onError,
+        new Error(
+          `artel: the worker tracks at most ${FORWARDS_PER_MINUTE} forwarded events a minute, so it dropped the rest`,
+        ),
+      );
     }
+    tracked++;
     return undefined;
   };
   chromeApi().runtime.onMessage.addListener(onMessage);
-  return () => chromeApi().runtime.onMessage.removeListener(onMessage);
 }
 
 /**
- * Sets the uninstall page to `pageUrl` with the fields of `uninstallParams()` added to its query, or to `pageUrl` alone
- * when `uninstallParams()` resolves to undefined. Chrome keeps the address as it was set, so the service worker calls
- * this on each start and after each change of state. It resolves and never rejects. A failure of `uninstallParams()`
- * goes to the collector's `onError`, and any other failure to its own `onError`.
+ * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It
+ * resolves and never rejects: a failure goes to `onError`.
  */
-export async function refreshUninstallUrl(
-  collector: Collector,
+async function setUninstallUrl(
   pageUrl: string,
-  { onError }: { onError?: (error: Error) => void } = {},
+  params: UninstallParams | undefined,
+  onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
   try {
     const url = new URL(pageUrl);
-    const params = await collector.uninstallParams();
     for (const [name, value] of Object.entries(params ?? {})) {
       url.searchParams.set(name, String(value));
     }
@@ -197,6 +322,11 @@ type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
 /** The slice of the `chrome` API these helpers call. The package carries no Chrome typings. */
 interface ChromeApi {
   storage: {
+    onChanged: {
+      addListener(
+        listener: (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void,
+      ): void;
+    };
     local: {
       get(key: string): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
@@ -209,10 +339,9 @@ interface ChromeApi {
     getManifest(): { version: string };
     sendMessage(message: unknown): Promise<unknown>;
     setUninstallURL(url: string): Promise<void>;
-    onMessage: {
-      addListener(listener: MessageListener): void;
-      removeListener(listener: MessageListener): void;
-    };
+    onMessage: { addListener(listener: MessageListener): void };
+    onInstalled: { addListener(listener: (details: { reason: string }) => void): void };
+    onStartup: { addListener(listener: () => void): void };
   };
 }
 
@@ -242,6 +371,6 @@ function isForwarded(message: unknown): message is { name: string; params?: Even
   return (
     typeof name === 'string' &&
     !REFUSED_NAMES.has(name) &&
-    eventProblem(name, Reflect.get(message, 'params')) === undefined
+    checkEvent(name, Reflect.get(message, 'params')) === undefined
   );
 }

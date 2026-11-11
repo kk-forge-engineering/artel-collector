@@ -1,18 +1,27 @@
 import { daysBetween, formatDay, localDateAt } from './calendar.js';
 import { LifecycleEvent, UNINSTALLED, type EventParams, type UsageEvent } from './envelope.js';
 import { activeDaysBucket, ageInDays, isLanguage, languageTag, newEvent, uninstalledParams } from './fields.js';
-import { accepted, checkedBuild, newBrowserReader, newStringStorage, quoted, reportTo, usableId } from './hostInput.js';
+import {
+  accepted,
+  checkedBuild,
+  isUsableId,
+  newBrowserReader,
+  newStringStorage,
+  quoted,
+  reportTo,
+  usableId,
+} from './hostInput.js';
 import { systemClock } from './clock.js';
 import { newChannelStorage } from './storage.js';
 import { AnalyticsState, Mode, type Collector, type CollectorOptions } from './collectorTypes.js';
-import { copyOfParams, eventProblem } from './eventCheck.js';
+import { acceptedEvent } from './eventCheck.js';
 import { newInstallState } from './installState.js';
 import { exclusive } from './lock.js';
 import { newOutbox } from './outbox.js';
 import { newPageReader, type PageRead, type PageReader } from './page.js';
-import type { QueuedEnvelope } from './queue.js';
-import { carriesPage, channelTakes, fieldsForState, type StateFields } from './stateFields.js';
-import { newHttpTransport } from './transport.js';
+import type { Identity, QueuedEnvelope } from './queue.js';
+import { carriesPage, channelTakes, fieldsForState, isAnalyticsState, type StateFields } from './stateFields.js';
+import { newHttpTransport, type Transport } from './transport.js';
 
 const SESSION_IDLE_MINUTES = 10;
 const SEND_DELAY_SECONDS = 5;
@@ -22,19 +31,17 @@ const SEND_DELAY_SECONDS = 5;
  * envelope, such as a bad key, version or endpoint, and for options only a host outside TypeScript passes. A language
  * that breaks the intake's format is left out and goes to `onError`, since it often comes from the browser.
  */
-export function newCollector(options: CollectorOptions & { mode: typeof Mode.Identified }): Collector<'identified'>;
-export function newCollector(options: CollectorOptions & { mode: typeof Mode.Anonymous }): Collector<'anonymous'>;
-export function newCollector(options: CollectorOptions): Collector;
+export function newCollector<M extends Mode>(options: CollectorOptions & { mode: M }): Collector<M>;
 export function newCollector(options: CollectorOptions): Collector {
   const product = checkedBuild(options);
   const { mode } = options;
-  const transport = options.transport ?? newHttpTransport(options.endpoint);
+  const transports = transportsOf(options);
   const storage = newChannelStorage(newStringStorage(options.storage), options.key);
   const clock = options.clock ?? systemClock;
   const reportError = (error: unknown): void => reportTo(options.onError, error);
   const lock = exclusive(options.lock);
   const getId = options.mode === Mode.Identified ? usableId(options.getId, reportError) : undefined;
-  const readBrowser = options.mode === Mode.Identified ? newBrowserReader(options.browser, reportError) : undefined;
+  const readBrowser = options.mode === Mode.Anonymous ? undefined : newBrowserReader(options.browser, reportError);
   const browserLanguage = accepted('browserLanguage', languageTag(options.browserLanguage), isLanguage, reportError);
   const uiLanguage = accepted('uiLanguage', languageTag(options.uiLanguage), isLanguage, reportError);
   const install = newInstallState({
@@ -42,26 +49,15 @@ export function newCollector(options: CollectorOptions): Collector {
     sessionIdleMs: durationOr(options.sessionIdleMinutes, SESSION_IDLE_MINUTES) * 60_000,
   });
   const outbox = newOutbox({
+    key: options.key,
     storage,
     lock,
-    transport,
-    identify: () =>
-      lock(async () => {
-        // The check names no user once the state has left identified. The state can change in this or another context
-        // after the lease.
-        if (!(await currentFields()).mayName) {
-          return undefined;
-        }
-        const id = await getId?.();
-        if (id === undefined) {
-          return undefined;
-        }
-        await noteId(id);
-        const browser = readBrowser?.();
-        return { id, ...(browser !== undefined && { browser }) };
-      }),
+    ...transports,
+    // The current state decides the id, so an envelope names no user once the state has left the one it was recorded
+    // in. The state can change in this or another context after the lease.
+    identify: () => lock(async () => identityIn(await currentFields())),
     giveBack: (items) => giveBack(items),
-    sendDelayMs: durationOr(options.sendDelaySeconds, SEND_DELAY_SECONDS) * 1_000,
+    sendDelayMs: sendDelayMsOf(options),
     clock,
     reportError,
   });
@@ -80,11 +76,7 @@ export function newCollector(options: CollectorOptions): Collector {
     const withInstallDay = async (): Promise<T> => {
       if (!isInstallDayKnown) {
         await install.installDayOr(localDateAt(clock.now()));
-        await dropStateTheChannelNoLongerTakes();
-        if ((await currentState()) === AnalyticsState.OptedOut) {
-          // A run stopped between storing the opted_out state and dropping the queue left events that must not go.
-          await discardForOptOut();
-        }
+        await settleStoredState();
         isInstallDayKnown = true;
         // The first send carries what an earlier run of the host left queued. A run stopped mid-send holds a lease, and
         // its events go with the first send after the lease runs out.
@@ -106,9 +98,9 @@ export function newCollector(options: CollectorOptions): Collector {
   }
 
   /**
-   * Stores the id `getId` gave. An id other than the last one means another user: the events of the last one, and
-   * those that waited for an id after it, are dropped, so none goes under another user's id. The session ends, so no
-   * session holds the events of two users.
+   * Stores the id an envelope names the user by. An id other than the last one means another user: the events of the
+   * last one, and those that waited for an id after it, are dropped, so none goes under another user's id. The session
+   * ends, so no session holds the events of two users.
    */
   async function noteId(id: string): Promise<void> {
     const last = await install.lastId();
@@ -122,35 +114,84 @@ export function newCollector(options: CollectorOptions): Collector {
     await install.setLastId(id);
   }
 
-  /** Drops the queued events that name the user or wait for an id, and the last id with them. */
-  async function leaveIdentity(): Promise<void> {
-    await giveBack(await outbox.discardIdentified());
-    await install.setLastId('');
+  /**
+   * Resolves to the id the state of `fields` names the user by, with its kind and the browser, or to undefined while
+   * there is none. The pseudonymous state's id is the install id, which the collector makes once. A new id counts as
+   * another user, as `noteId` describes.
+   */
+  async function identityIn({ idKind }: StateFields): Promise<Identity | undefined> {
+    if (idKind === undefined) {
+      return undefined;
+    }
+    const id = idKind === AnalyticsState.Pseudonymous ? await install.installId() : await getId?.();
+    if (id === undefined) {
+      return undefined;
+    }
+    await noteId(id);
+    const browser = readBrowser?.();
+    return { id, id_kind: idKind, ...(browser !== undefined && { browser }) };
   }
 
-  /** Drops what was not sent, except an `opted_out`, and the last id with it. */
-  async function discardForOptOut(): Promise<void> {
-    await giveBack(await outbox.discard());
+  /**
+   * Forgets the last id, as `forget` does, and drops the queued events that name the user or wait for an id. Deletes
+   * the install id, so a later pseudonymous state takes a new one.
+   */
+  async function leaveIdentity(): Promise<void> {
+    const last = await install.lastId();
+    if (isUsableId(last)) {
+      await giveBack(await outbox.forget(last));
+    }
+    await giveBack(await outbox.discardIdentified());
+    // The install id goes before the last id. A run that stops between them then keeps the last id, and the next run
+    // leaves it again.
+    await install.dropInstallId();
     await install.setLastId('');
   }
 
   /**
-   * Stores an identified state as anonymous when this channel is anonymous, as after the product changed its mode.
-   * Drops the queued events that name the user or wait for an id, which this channel can never send.
+   * Stores `next` and leaves the id of `previous`, and resolves to whether `previous` had one. A change between the two
+   * states with an id leaves first. A run that stops in between keeps the old state with its id forgotten, so no event
+   * goes under the other state's id. Any other change stores first, so an opt-out stays, and the next run leaves the id
+   * the stored state no longer has.
    */
-  async function dropStateTheChannelNoLongerTakes(): Promise<void> {
-    const stored = await install.state();
-    if (stored === AnalyticsState.Identified && !takes(stored)) {
+  async function storeState(previous: AnalyticsState, next: AnalyticsState): Promise<boolean> {
+    const hadId = fieldsIn(previous).idKind !== undefined;
+    const isSwitch = hadId && fieldsIn(next).idKind !== undefined;
+    if (isSwitch) {
       await leaveIdentity();
+    }
+    await install.setState(next);
+    if (hadId && !isSwitch) {
+      await leaveIdentity();
+    }
+    return hadId;
+  }
+
+  /**
+   * Finishes a change of state that a stopped run or a change of the channel's mode left. Stores a state this channel
+   * no longer takes as anonymous. Leaves the last id in a state without one, and drops the queue in the opted_out
+   * state.
+   */
+  async function settleStoredState(): Promise<void> {
+    const stored = await install.state();
+    const isUntaken = isAnalyticsState(stored) && !takes(stored);
+    if (isUntaken) {
       await install.setState(AnalyticsState.Anonymous);
       await install.endSession();
+    }
+    const state = await currentState();
+    if (isUntaken || (fieldsIn(state).idKind === undefined && isUsableId(await install.lastId()))) {
+      await leaveIdentity();
+    }
+    if (state === AnalyticsState.OptedOut) {
+      await giveBack(await outbox.discard());
     }
   }
 
   async function currentState(): Promise<AnalyticsState> {
     const stored = await install.state();
-    // The function reads an identified state this channel does not take as anonymous. Such a state stays after the
-    // product changes its mode.
+    // The function reads a state this channel does not take as anonymous. Such a state stays after the product changes
+    // its mode.
     return takes(stored) ? stored : AnalyticsState.Anonymous;
   }
 
@@ -191,12 +232,9 @@ export function newCollector(options: CollectorOptions): Collector {
     if (view?.isRepeatedView === true) {
       return false;
     }
-    // The identified state names the user once the product knows the id. Another user's id gives back the marks of the
-    // last user's dropped events, the install and version marks included, before this event takes its own.
-    const id = fields.mayName ? await getId?.() : undefined;
-    if (id !== undefined) {
-      await noteId(id);
-    }
+    // A state with an id names the user once the id is known. Another user's id gives back the marks of the last user's
+    // dropped events, the install and version marks included, before this event takes its own.
+    const identity = await identityIn(fields);
     const productVersion = fields.product.version;
     // A `takeMark` that fails took no mark, so nothing goes back.
     if (takeMark !== undefined && !(await takeMark(productVersion))) {
@@ -215,17 +253,17 @@ export function newCollector(options: CollectorOptions): Collector {
         page: fields.mayCarryPage ? view?.fields : undefined,
         isAgeExact: fields.isAgeExact,
       });
-      const browser = id === undefined ? undefined : readBrowser?.();
+      const { browser, ...id } = identity ?? {};
       dropped = await outbox.add(
         {
           key: options.key,
           ...fields.product,
           ...(browser !== undefined && { browser }),
           session: stamp.session,
-          ...(id !== undefined && { id }),
+          ...id,
         },
         event,
-        { awaitsId: fields.mayName && id === undefined },
+        { awaitsId: fields.idKind !== undefined && identity === undefined },
       );
     } catch (error) {
       // A failure before the queue holds the event loses it. Its marks go back, so the next event takes them and the
@@ -264,20 +302,12 @@ export function newCollector(options: CollectorOptions): Collector {
 
   const collector: Collector = {
     track: async (name, given) => {
-      let params: EventParams | undefined;
-      try {
-        params = copyOfParams(given);
-      } catch (error) {
-        reportError(error);
-        return;
-      }
-      const problem = eventProblem(name, params);
-      if (problem !== undefined) {
-        reportError(new Error(`artel: event ${quoted(name)} ${problem}, so it was not tracked`));
+      const event = acceptedEvent(name, given, reportError);
+      if (event === undefined) {
         return;
       }
       const page = pageOf(name);
-      await serialize(async () => record({ name, params, page }), false);
+      await serialize(async () => record({ name, params: event.params, page }), false);
     },
 
     // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.
@@ -294,7 +324,7 @@ export function newCollector(options: CollectorOptions): Collector {
     },
 
     setState: async (next) => {
-      const isOptedOut = await serialize(async () => {
+      const hasRequest = await serialize(async () => {
         if (!takes(next)) {
           reportError(new TypeError(`artel: a channel of mode ${quoted(mode)} takes no state ${quoted(next)}`));
           return false;
@@ -303,20 +333,18 @@ export function newCollector(options: CollectorOptions): Collector {
         if (previous === next) {
           return false;
         }
-        // The state goes first. A failure after it leaves the user opted out, and the next run drops what is queued.
-        await install.setState(next);
+        const hadId = await storeState(previous, next);
         if (next === AnalyticsState.OptedOut) {
           // Events from before the opt-out that have not gone yet never go.
-          await discardForOptOut();
+          await giveBack(await outbox.discard());
           await recordOptOut();
-        } else if (previous === AnalyticsState.Identified) {
-          await leaveIdentity();
         }
         // A new session keeps the intake from tying together events from before and after the change.
         await install.endSession();
-        return next === AnalyticsState.OptedOut;
+        return hadId || next === AnalyticsState.OptedOut;
       }, false);
-      if (isOptedOut) {
+      // The forget request and the opted_out go at once.
+      if (hasRequest) {
         await flush();
       }
     },
@@ -326,13 +354,13 @@ export function newCollector(options: CollectorOptions): Collector {
     flush,
 
     forget: async (id) => {
-      // A host outside TypeScript can pass any value, which no envelope carries as its id.
-      if (typeof id !== 'string') {
-        reportError(new TypeError('artel: forget takes the id getId gave, a string'));
+      // The intake refuses a forget of any other value, which no envelope carries as its id.
+      if (!isUsableId(id)) {
+        reportError(new TypeError('artel: forget takes an id of 1 to 64 characters'));
         return;
       }
       await serialize(async () => {
-        // The intake deletes the user's events, so each envelope of the id gives back its marks, sent or not.
+        // The intake deletes the id's events, so each envelope of the id gives back its marks, sent or not.
         await giveBack(await outbox.forget(id));
         // The events that wait for an id after the last user are that user's, so they go with it. The next id counts
         // as another user, so the events that wait after the forget never go under it.
@@ -341,9 +369,7 @@ export function newCollector(options: CollectorOptions): Collector {
           await install.forgetLastId();
         }
       }, undefined);
-      // A request already on its way may carry the id. It must reach the intake before the host asks the intake to
-      // forget the user.
-      await outbox.settled();
+      await outbox.send();
     },
 
     uninstallParams: () =>
@@ -362,6 +388,25 @@ export function newCollector(options: CollectorOptions): Collector {
       }, undefined),
   };
   return collector;
+}
+
+/**
+ * Returns the transport of the envelopes and that of the forget requests. The intake's forget address replaces the last
+ * segment of the relay path, `/v1/public/relay`. A product's own transport takes both kinds of request.
+ */
+function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
+  if (options.transport !== undefined) {
+    return { transport: options.transport, forgetTransport: options.transport };
+  }
+  return {
+    transport: newHttpTransport(options.endpoint),
+    forgetTransport: newHttpTransport(new URL('forget', options.endpoint).href),
+  };
+}
+
+/** Returns the longest an event waits in the queue before a send starts, as the options set it. */
+export function sendDelayMsOf({ sendDelaySeconds }: Pick<CollectorOptions, 'sendDelaySeconds'>): number {
+  return durationOr(sendDelaySeconds, SEND_DELAY_SECONDS) * 1_000;
 }
 
 /** Returns `value`, or `fallback` for a duration that is no finite number from 0. */

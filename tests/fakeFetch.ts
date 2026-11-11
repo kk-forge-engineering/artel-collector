@@ -20,6 +20,7 @@ export interface Envelope {
   ui_language?: string;
   session: string;
   id?: string;
+  id_kind?: string;
   batch?: string;
   events: SentEvent[];
 }
@@ -35,9 +36,23 @@ export interface SentEvent {
   referrer?: string;
 }
 
-/** A fake `fetch` that records every request. It answers 204 unless a test queued another outcome. */
+/** One request to forget a user, with its body as the intake reads it. */
+export interface RecordedForget {
+  url: string;
+  key: unknown;
+  id: unknown;
+}
+
+/** The path of the intake's forget address. Every other request carries an envelope. */
+const FORGET_PATH = '/v1/public/forget';
+
+/**
+ * A fake `fetch` that records every request, the envelopes in `requests` and the forget requests in `forgets`. It
+ * answers 204 unless a test queued another outcome, which the next request of either kind takes.
+ */
 export class FakeFetch {
   readonly requests: RecordedRequest[] = [];
+  readonly forgets: RecordedForget[] = [];
   private readonly outcomes: Array<{ status: number; headers?: Record<string, string> } | Error> = [];
 
   /** Queues `times` answers with `status`, and `headers` when given, for the next requests. */
@@ -65,13 +80,18 @@ export class FakeFetch {
 
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
-    this.requests.push({
-      url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
-      method: init?.method,
-      contentType: headers.get('content-type') ?? undefined,
-      keepalive: init?.keepalive,
-      envelope: parseEnvelope(init?.body),
-    });
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (new URL(url).pathname === FORGET_PATH) {
+      this.forgets.push({ url, ...parseForget(init?.body) });
+    } else {
+      this.requests.push({
+        url,
+        method: init?.method,
+        contentType: headers.get('content-type') ?? undefined,
+        keepalive: init?.keepalive,
+        envelope: parseEnvelope(init?.body),
+      });
+    }
     const outcome = this.outcomes.shift() ?? { status: 204 };
     if (outcome instanceof Error) {
       throw outcome;
@@ -98,6 +118,14 @@ function parseEnvelope(body: unknown): Envelope {
     throw new Error(`expected an envelope, got ${body}`);
   }
   return envelope;
+}
+
+function parseForget(body: unknown): { key: unknown; id: unknown } {
+  const forget: unknown = typeof body === 'string' ? JSON.parse(body) : undefined;
+  if (typeof forget !== 'object' || forget === null || Object.keys(forget).join() !== 'key,id') {
+    throw new Error(`expected a forget body of key and id, got ${String(body)}`);
+  }
+  return { key: Reflect.get(forget, 'key'), id: Reflect.get(forget, 'id') };
 }
 
 /** Checks only for the events list. The tests assert the rest of the shape themselves. */

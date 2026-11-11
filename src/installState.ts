@@ -1,5 +1,6 @@
 import { Period, formatDay, localDateAt, parseDay, periodKey, type CalendarDate } from './calendar.js';
 import { LifecycleEvent, type Envelope, type UsageEvent } from './envelope.js';
+import { newRandomId } from './queue.js';
 import type { StorageAdapter } from './storage.js';
 
 const SESSION_ID_LENGTH = 12;
@@ -13,13 +14,18 @@ const MAX_ACTIVE_DAYS = 21;
  * the next id reads as another user's.
  */
 const FORGOTTEN_ID = '<forgotten>'.repeat(6);
+/** The install id's form: 16 random bytes as lowercase hex, as the intake expects it. */
+const INSTALL_ID_FORMAT = /^[\da-f]{32}$/;
+const INSTALL_ID_BYTES = 16;
 
 const StorageKey = {
   InstallDay: 'install_day',
   Installed: 'installed',
   Version: 'version',
   State: 'state',
-  /** The last id `getId` gave, `''` when none names the user, or `FORGOTTEN_ID` after the host forgot the user. */
+  /** The random id of the pseudonymous state, `''` once the user left that state. */
+  InstallId: 'install_id',
+  /** The last id an envelope named the user by, `''` when none does, or `FORGOTTEN_ID` after the host forgot it. */
   LastId: 'last_id',
   Session: 'session',
   SessionSeen: 'session_seen',
@@ -46,14 +52,18 @@ interface InstallState {
   state(): Promise<string | undefined>;
   setState(state: string): Promise<void>;
   /**
-   * Returns the last id `getId` gave while the user was identified, or undefined. After `forgetLastId` it returns a
-   * value no id equals.
+   * Returns the last id an envelope named the user by, the install id or the id from `getId`, or undefined. After
+   * `forgetLastId` it returns a value no id equals.
    */
   lastId(): Promise<string | undefined>;
-  /** Stores the id `getId` gave, or `''` once no id names the user. */
+  /** Stores the id an envelope names the user by, or `''` once no id does. */
   setLastId(id: string): Promise<void>;
   /** Stores a last id that no id equals, so the next id counts as another user. */
   forgetLastId(): Promise<void>;
+  /** Returns the install id, and stores a new one when none is stored or the stored one breaks its form. */
+  installId(): Promise<string>;
+  /** Deletes the install id, so the next one is new. */
+  dropInstallId(): Promise<void>;
   /**
    * Gives back the marks these envelopes' events took that no later event took over, so the next such event takes them
    * again: first-of-period marks, the `installed` mark, and the `updated` version while it is still stored. A
@@ -186,6 +196,18 @@ export function newInstallState({
     setLastId: (id) => storage.set(StorageKey.LastId, id),
 
     forgetLastId: () => storage.set(StorageKey.LastId, FORGOTTEN_ID),
+
+    installId: async () => {
+      const stored = await storage.get(StorageKey.InstallId);
+      if (stored !== undefined && INSTALL_ID_FORMAT.test(stored)) {
+        return stored;
+      }
+      const id = newRandomId(INSTALL_ID_BYTES);
+      await storage.set(StorageKey.InstallId, id);
+      return id;
+    },
+
+    dropInstallId: () => storage.set(StorageKey.InstallId, ''),
 
     giveBack: async (envelopes) => {
       for (const { version, events } of envelopes) {

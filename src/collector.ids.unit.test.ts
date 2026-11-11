@@ -143,7 +143,7 @@ describe('when the id changes', () => {
     await harness.collector.track('waiting');
     await harness.collector.forget('user-z');
     id = 'user-a';
-    await harness.settle();
+    await harness.collector.flush();
 
     expect(harness.fetch.requests.map((request) => request.envelope.id)).toEqual(['user-a', 'user-a']);
   });
@@ -260,7 +260,7 @@ describe('a host outside TypeScript that calls a method with any argument', () =
     await harness.settle();
 
     expect(harness.fetch.eventNames).toEqual(['a']);
-    expect(harness.errors).toEqual([new TypeError('artel: forget takes the id getId gave, a string')]);
+    expect(harness.errors).toEqual([new TypeError('artel: forget takes an id of 1 to 64 characters')]);
   });
 
   it('keeps the events that wait for an id at a forget of undefined before any id is known', async () => {
@@ -274,7 +274,7 @@ describe('a host outside TypeScript that calls a method with any argument', () =
     await harness.settle();
 
     expect(harness.fetch.eventNames).toEqual(['a', 'b']);
-    expect(harness.errors).toEqual([new TypeError('artel: forget takes the id getId gave, a string')]);
+    expect(harness.errors).toEqual([new TypeError('artel: forget takes an id of 1 to 64 characters')]);
   });
 
   it('resolves getState and flush whatever they are given, and reports nothing', async () => {
