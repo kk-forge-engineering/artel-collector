@@ -2,7 +2,7 @@
 
 Sends a product's analytics events to the intake service. It runs in a website, a web app, a Chrome extension or a desktop window, and has no runtime dependencies.
 
-The collector marks the first event of each local day, week, month, quarter and year, and adds the install age to those events, so the intake counts active users per period without a user id. The collector also keeps a session, holds every event in a queue in storage until the intake takes it, and keeps the user's analytics choice.
+The collector marks the first event of each local day, week, month, quarter and year, and adds the install age to those events, so the intake counts active users per period without a user id. The collector also keeps a session, holds every event in a queue in storage until the intake takes it, and keeps the user's analytics state.
 
 ## Install
 
