@@ -21,6 +21,8 @@ import type {
   TransportResult,
   UninstallParams,
 } from './exports.js';
+import * as desktop from './desktop.js';
+import type { DesktopCollectorOptions } from './desktop.js';
 import * as extension from './extension.js';
 import type { ExtensionCollectorOptions } from './extension.js';
 import * as web from './web.js';
@@ -60,10 +62,12 @@ describe('the public API', () => {
         'acceptForwarded',
         'forwardTrack',
         'newChromeStorageAdapter',
+        'newContentScriptCollector',
         'newExtensionCollector',
         'refreshUninstallUrl',
       ]),
     );
+    expect(new Set(Object.keys(desktop))).toEqual(new Set(['newDesktopCollector']));
   });
 
   it('exports these types', () => {
@@ -77,6 +81,7 @@ describe('the public API', () => {
         CollectorOptions,
         CommonOptions,
         Delivery,
+        DesktopCollectorOptions,
         EventParams,
         ExtensionCollectorOptions,
         GetId,
@@ -211,5 +216,32 @@ describe('the public API', () => {
     expectTypeOf<Parameters<typeof core.newCollector>[0]>().toEqualTypeOf<CollectorOptions>();
     expectTypeOf<Parameters<typeof web.newWebCollector>[0]>().toEqualTypeOf<WebCollectorOptions>();
     expectTypeOf<Parameters<typeof extension.newExtensionCollector>[0]>().toEqualTypeOf<ExtensionCollectorOptions>();
+    expectTypeOf<Parameters<typeof desktop.newDesktopCollector>[0]>().toEqualTypeOf<DesktopCollectorOptions>();
+  });
+
+  it('takes only a desktop platform, and no browser or page, in desktop options', () => {
+    const base = { key: SITE_KEY, version: '1.0.0', endpoint: 'https://x', mode: 'anonymous' } as const;
+
+    expectTypeOf({ ...base, platform: 'macos' } as const).toExtend<DesktopCollectorOptions>();
+    expectTypeOf(base).not.toExtend<DesktopCollectorOptions>();
+    expectTypeOf({ ...base, platform: 'web' } as const).not.toExtend<DesktopCollectorOptions>();
+    expectTypeOf({
+      ...base,
+      platform: 'linux',
+      getPage: () => undefined,
+    } as const).not.toExtend<DesktopCollectorOptions>();
+    expectTypeOf({
+      ...base,
+      platform: 'linux',
+      mode: 'identified',
+      getId: () => USER_ID,
+      browser: { name: 'chrome' },
+    } as const).not.toExtend<DesktopCollectorOptions>();
+  });
+
+  it("gives a content script only track and flush, so it can neither read nor change the user's choice", () => {
+    expectTypeOf(extension.newContentScriptCollector()).toEqualTypeOf<extension.ContentScriptCollector>();
+    expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('setState');
+    expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('getState');
   });
 });

@@ -8,8 +8,6 @@ import { reportTo } from './hostInput.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
 
-/** The message in each of the extension's `_locales` that holds that locale's code, such as `pt-BR`. */
-const UI_LANGUAGE_MESSAGE = 'ui_language';
 const FORWARD_TYPE = 'artel.track';
 /**
  * The event names the worker refuses from a content script: every system event, which the intake counts from any page
@@ -54,13 +52,12 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
   const closed = isServiceWorker() ? closeToContentScripts(options.onError) : Promise.resolve();
   const defaults = {
     platform: Platform.Extension,
-    // The function reads each default only when the caller leaves the option out. A test's fake browser may lack the
-    // manifest and `chrome.i18n`.
+    // The function reads each default only when the caller leaves the option out, so outside an extension it needs only
+    // `version`.
     version: options.version ?? chromeApi().runtime.getManifest().version,
     storage: after(closed, options.storage ?? newChromeStorageAdapter()),
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
-    uiLanguage: options.uiLanguage ?? localeOfExtension(),
   };
   return options.mode === Mode.Identified
     ? newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) })
@@ -104,15 +101,6 @@ function after(ready: Promise<void>, storage: StorageAdapter): StorageAdapter {
 }
 
 /**
- * Returns the locale Chrome picked from the extension's `_locales`, which each locale names in its `ui_language`
- * message, or undefined when the extension has no such message. Chrome gives no other way to read that choice.
- */
-function localeOfExtension(): string | undefined {
-  const locale = chromeApi().i18n?.getMessage(UI_LANGUAGE_MESSAGE);
-  return locale === undefined || locale === '' ? undefined : locale;
-}
-
-/**
  * Returns a storage adapter over `chrome.storage.local`, which the service worker and the extension pages share. It
  * needs the `storage` permission.
  */
@@ -138,6 +126,19 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
   } catch {
     // The send fails while the service worker updates or is gone. The content script drops the event and does not fail.
   }
+}
+
+/** The part of the collector a content script uses: it tracks events, and the worker keeps the user's choice. */
+export type ContentScriptCollector = Pick<Collector, 'track' | 'flush'>;
+
+/**
+ * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
+ * and the worker's collector checks, queues and sends it under the user's choice, so `flush` does nothing here. The
+ * user's choice lives in the worker and the extension pages, so a content script can neither read nor change it. It
+ * reads no storage, needs no key, version or endpoint, and never throws.
+ */
+export function newContentScriptCollector(): ContentScriptCollector {
+  return { track: forwardTrack, flush: async () => undefined };
 }
 
 /**
@@ -203,8 +204,6 @@ interface ChromeApi {
       setAccessLevel?: (options: { accessLevel: string }) => Promise<void>;
     };
   };
-  /** Missing in a test's fake browser; a real extension context has it. */
-  i18n?: { getMessage(name: string): string };
   runtime: {
     id: string;
     getManifest(): { version: string };
