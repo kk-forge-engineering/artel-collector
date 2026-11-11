@@ -50,33 +50,29 @@ export function newPageHarness(): Harness {
   return harness;
 }
 
-/** A document whose visibility a test sets, as a tab switch does. */
+/** A document with a referrer, which takes listeners as a page's does. */
 export class FakeDocument extends EventTarget {
-  visibilityState: 'visible' | 'hidden' = 'visible';
-
   constructor(readonly referrer = '') {
     super();
   }
-
-  hide(): void {
-    this.visibilityState = 'hidden';
-    this.dispatchEvent(new Event('visibilitychange'));
-  }
 }
 
-/** Puts a fresh `FakeDocument` and window in place of the page globals, so a test can hide or leave the page. */
-export function stubHideablePage(): { document: FakeDocument; window: EventTarget } {
-  const page = { document: new FakeDocument(), window: new EventTarget() };
-  vi.stubGlobal('document', page.document);
-  vi.stubGlobal('window', page.window);
-  return page;
-}
-
-/** Hides the page by `event`: `visibilitychange` to hidden, as a tab switch does, or `pagehide`, as leaving does. */
-export function hide(page: { document: FakeDocument; window: EventTarget }, event: string): void {
-  if (event === 'pagehide') {
-    page.window.dispatchEvent(new Event('pagehide'));
-  } else {
-    page.document.hide();
+/**
+ * Puts a fresh `FakeDocument` and window in place of the page globals, and returns the list each event type that a
+ * listener is added for goes to.
+ */
+export function stubListenedPage(): string[] {
+  const added: string[] = [];
+  for (const [name, target] of [
+    ['document', new FakeDocument()],
+    ['window', new EventTarget()],
+  ] as const) {
+    const add = target.addEventListener.bind(target);
+    target.addEventListener = (type, listener) => {
+      added.push(type);
+      add(type, listener);
+    };
+    vi.stubGlobal(name, target);
   }
+  return added;
 }

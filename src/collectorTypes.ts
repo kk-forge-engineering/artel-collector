@@ -195,8 +195,8 @@ export interface Collector<M extends Mode = Mode> {
    */
   getState(): Promise<AnalyticsState>;
   /**
-   * Sends what is queued now, or once the retry wait is over. A collector of `newWebCollector`, `newDesktopCollector`
-   * or `newExtensionCollector` in a page calls it itself when the page is hidden.
+   * Sends what is queued now, or once the retry wait is over. The collector sends within the send delay without it, so a
+   * product calls it only to send sooner.
    */
   flush(): Promise<void>;
   /**

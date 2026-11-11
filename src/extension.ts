@@ -1,6 +1,6 @@
 import { detectBrowser } from './browser.js';
 import { systemClock, type Clock } from './clock.js';
-import { newCollector } from './collector.js';
+import { newCollector, sendDelayMsOf } from './collector.js';
 import {
   AnalyticsState,
   Mode,
@@ -12,8 +12,8 @@ import {
 } from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { checkEvent } from './eventCheck.js';
-import { flushOnHide } from './flushOnHide.js';
 import { reportTo } from './hostInput.js';
+import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
 
@@ -55,7 +55,8 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
  * closes the storage to content scripts, which could otherwise change the user's analytics state and the queue. The
  * worker's collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content
  * scripts forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of
- * the worker, so the product builds it there. A page's collector sends its queue when the page is hidden.
+ * the worker, so the product builds it there. The worker's collector also sends what the pages queue, even after the
+ * page closed.
  */
 export function newExtensionCollector<M extends Mode>(options: ExtensionCollectorOptions & { mode: M }): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
@@ -76,20 +77,51 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
       : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
   const collector = withUninstallPage(built, options.uninstallPage, options.onError);
   if (isWorker) {
-    listenAsWorker(collector, options.clock ?? systemClock, options.onError);
-    return collector;
+    listenAsWorker(collector, {
+      queueKey: `artel.${options.key}.${QUEUE_KEY}`,
+      sendDelayMs: sendDelayMsOf(options),
+      clock: options.clock ?? systemClock,
+      onError: options.onError,
+    });
   }
-  // An extension page is hidden as a tab is. The service worker has no page.
-  return flushOnHide(collector);
+  return collector;
 }
 
 /**
- * Registers the worker's listeners: `installed` and `updated` at `onInstalled`, the events content scripts forward, and
- * an empty `onStartup` listener. Chrome starts a worker with an `onStartup` listener when the browser starts, so the
- * access level is set again before any page or content script runs.
+ * Registers the worker's listeners: `installed` and `updated` at `onInstalled`, the events content scripts forward, the
+ * events pages queue, and an empty `onStartup` listener. Chrome starts a worker with an `onStartup` listener when the
+ * browser starts, so the access level is set again before any page or content script runs.
  */
-function listenAsWorker(collector: Collector, clock: Clock, onError: ((error: Error) => void) | undefined): void {
-  const { runtime } = chromeApi();
+function listenAsWorker(
+  collector: Collector,
+  {
+    queueKey,
+    sendDelayMs,
+    clock,
+    onError,
+  }: {
+    /** The storage key of this channel's queue. */
+    queueKey: string;
+    sendDelayMs: number;
+    clock: Clock;
+    onError: ((error: Error) => void) | undefined;
+  },
+): void {
+  const { runtime, storage } = chromeApi();
+  // A page's own send cannot finish once the page closes, as when a popup closes right after an event. The worker
+  // sends what pages queue within the send delay. Its own sends add no event to the queue, so they schedule nothing.
+  let isSendScheduled = false;
+  storage.onChanged.addListener((changes, area) => {
+    const change = changes[queueKey];
+    if (area !== 'local' || change === undefined || isSendScheduled || !addsEvents(change)) {
+      return;
+    }
+    isSendScheduled = true;
+    clock.setTimeout(() => {
+      isSendScheduled = false;
+      void collector.flush();
+    }, sendDelayMs);
+  });
   runtime.onInstalled.addListener(({ reason }) => {
     if (reason === 'install') {
       void collector.installed();
@@ -144,6 +176,13 @@ function withUninstallPage(
       await refresh();
     },
   };
+}
+
+/** Tells whether a change of the stored queue adds an event to it, as a new envelope or one more event of an envelope. */
+function addsEvents({ oldValue, newValue }: { oldValue?: unknown; newValue?: unknown }): boolean {
+  const queueOf = (value: unknown): QueuedEnvelope[] => parseQueue(typeof value === 'string' ? value : undefined) ?? [];
+  const before = new Map(queueOf(oldValue).map(({ qid, envelope }) => [qid, envelope.events.length]));
+  return queueOf(newValue).some(({ qid, envelope }) => envelope.events.length > (before.get(qid) ?? 0));
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */
@@ -283,6 +322,11 @@ type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
 /** The slice of the `chrome` API these helpers call. The package carries no Chrome typings. */
 interface ChromeApi {
   storage: {
+    onChanged: {
+      addListener(
+        listener: (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void,
+      ): void;
+    };
     local: {
       get(key: string): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;

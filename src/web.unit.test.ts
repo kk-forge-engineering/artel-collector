@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { newMemoryStorage } from './exports.js';
 import { newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from './web.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
-import { FakeDocument, hide, stubHideablePage } from '../tests/fakePage.js';
+import { FakeDocument, stubListenedPage } from '../tests/fakePage.js';
 import { ENDPOINT, USER_ID, SITE_KEY } from '../tests/harness.js';
 
 /** The part of the Web Storage API the adapter uses, over a Map. */
@@ -125,11 +125,7 @@ describe('newWebCollector', () => {
    * Stubs a Firefox page at `/editor` with no Web Locks, and returns the network the collector posts to and the fake
    * `localStorage`.
    */
-  function stubPage(): {
-    fetch: FakeFetch;
-    webStorage: FakeWebStorage;
-    page: ReturnType<typeof stubHideablePage>;
-  } {
+  function stubPage(): { fetch: FakeFetch; webStorage: FakeWebStorage; listened: string[] } {
     const fetch = new FakeFetch();
     const webStorage = new FakeWebStorage();
     vi.stubGlobal('fetch', fetch.fetch);
@@ -139,32 +135,15 @@ describe('newWebCollector', () => {
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
     });
     vi.stubGlobal('location', new URL('https://example.com/editor'));
-    return { fetch, webStorage, page: stubHideablePage() };
+    return { fetch, webStorage, listened: stubListenedPage() };
   }
 
-  it.each(['visibilitychange', 'pagehide'])(
-    'sends the queue on its own when the page is hidden by %s',
-    async (event) => {
-      const { fetch, page } = stubPage();
-      const usage = newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'anonymous' });
-      await usage.track('report_exported');
+  it('adds no listener to the page: a send at hide would not finish before the page is gone', () => {
+    const { listened } = stubPage();
 
-      hide(page, event);
+    newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'anonymous' });
 
-      // The send delay is 5 seconds, longer than the wait, so only the hide sends.
-      await vi.waitFor(() => expect(fetch.eventNames).toEqual(['report_exported']));
-    },
-  );
-
-  it('sends nothing when the page becomes visible again', async () => {
-    const { fetch, page } = stubPage();
-    const usage = newWebCollector({ key: SITE_KEY, version: '1.0.0', endpoint: ENDPOINT, mode: 'anonymous' });
-    await usage.track('report_exported');
-
-    page.document.dispatchEvent(new Event('visibilitychange'));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(fetch.requests).toEqual([]);
+    expect(listened).toEqual([]);
   });
 
   it('sends a web envelope with the primary language of the user and the page, over localStorage, and no id or browser', async () => {

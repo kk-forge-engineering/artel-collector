@@ -57,7 +57,7 @@ export function newCollector(options: CollectorOptions): Collector {
     // in. The state can change in this or another context after the lease.
     identify: () => lock(async () => identityIn(await currentFields())),
     giveBack: (items) => giveBack(items),
-    sendDelayMs: durationOr(options.sendDelaySeconds, SEND_DELAY_SECONDS) * 1_000,
+    sendDelayMs: sendDelayMsOf(options),
     clock,
     reportError,
   });
@@ -402,6 +402,11 @@ function transportsOf(options: CollectorOptions): { transport: Transport; forget
     transport: newHttpTransport(options.endpoint),
     forgetTransport: newHttpTransport(new URL('forget', options.endpoint).href),
   };
+}
+
+/** Returns the longest an event waits in the queue before a send starts, as the options set it. */
+export function sendDelayMsOf({ sendDelaySeconds }: Pick<CollectorOptions, 'sendDelaySeconds'>): number {
+  return durationOr(sendDelaySeconds, SEND_DELAY_SECONDS) * 1_000;
 }
 
 /** Returns `value`, or `fallback` for a duration that is no finite number from 0. */

@@ -1,5 +1,4 @@
 import { newCollector } from './collector.js';
-import { flushOnHide } from './flushOnHide.js';
 import type { Collector, CommonOptions, Delivery, Mode, ModeOptions } from './collectorTypes.js';
 import type { Platform } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
@@ -25,7 +24,7 @@ export type DesktopCollectorOptions = Omit<CommonOptions, 'storage'> & {
  * Returns a collector for a window of a desktop app, such as a Tauri webview. Its windows share the webview's
  * `localStorage` and Web Locks, so they keep one queue and one state. It sends the user's language from
  * `navigator.language`. The app passes its own `uiLanguage`. It sends `installed` and `updated` itself when they are
- * due, and its queue when the window is hidden.
+ * due.
  */
 export function newDesktopCollector<M extends Mode>(options: DesktopCollectorOptions & { mode: M }): Collector<M>;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector {
@@ -39,5 +38,5 @@ export function newDesktopCollector(options: DesktopCollectorOptions): Collector
   // lock, so every window may build a collector. The collector runs its calls in this order.
   void collector.installed();
   void collector.updated();
-  return flushOnHide(collector);
+  return collector;
 }

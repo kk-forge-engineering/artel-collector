@@ -10,7 +10,6 @@ import {
   type PageOptions,
 } from './collectorTypes.js';
 import { PAGE_VIEW, Platform } from './envelope.js';
-import { flushOnHide } from './flushOnHide.js';
 import type { Lock } from './lock.js';
 import type { StorageAdapter } from './storage.js';
 
@@ -38,11 +37,9 @@ export function newWebCollector(options: WebCollectorOptions): Collector {
     browserLanguage: options.browserLanguage ?? navigator.language,
     getPage: options.getPage ?? pageFieldsWherePageIs,
   };
-  return flushOnHide(
-    options.mode === Mode.Anonymous
-      ? newCollector({ ...options, ...defaults })
-      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) }),
-  );
+  return options.mode === Mode.Anonymous
+    ? newCollector({ ...options, ...defaults })
+    : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
 }
 
 /**

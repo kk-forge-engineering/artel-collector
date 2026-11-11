@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AnalyticsState, Mode, newMemoryStorage } from './exports.js';
+import { AnalyticsState, Mode, newHttpTransport, newMemoryStorage, type GetId, type Transport } from './exports.js';
 import { newExtensionCollector } from './extension.js';
-import { newExtensionHarness, stubChrome } from '../tests/fakeChrome.js';
+import { newExtensionHarness, stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
+import { FakeFetch } from '../tests/fakeFetch.js';
 import { FakeClock } from '../tests/fakeClock.js';
-import { KEY } from '../tests/harness.js';
+import { ENDPOINT, KEY, SEND_DELAY_MS } from '../tests/harness.js';
 
 const UNINSTALL_PAGE = 'https://example.com/uninstall?product=demo';
 
@@ -40,6 +41,85 @@ describe('the service worker collector', () => {
     await settle();
 
     expect([chrome.startupListeners.size, fetch.requests, errors]).toEqual([1, [], []]);
+  });
+});
+
+describe('the events an extension page queues', () => {
+  /**
+   * Builds the worker's and a page's collector over one fake Chrome, each with its own network and clock. With `getId`
+   * both are of an identified channel, and the user is identified.
+   */
+  function newWorkerAndPage(getId?: GetId): {
+    page: ReturnType<typeof newExtensionCollector>;
+    worker: { fetch: FakeFetch; clock: FakeClock };
+    pageFetch: FakeFetch;
+    chrome: FakeChrome;
+  } {
+    const chrome = stubChrome();
+    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    const mode = getId === undefined ? ({ mode: 'anonymous' } as const) : ({ mode: 'identified', getId } as const);
+    if (getId !== undefined) {
+      chrome.items.set(`artel.${KEY}.state`, AnalyticsState.Identified);
+    }
+    const newContext = (): { fetch: FakeFetch; clock: FakeClock; transport: Transport } => {
+      const fetch = new FakeFetch();
+      const clock = new FakeClock('2026-10-29T10:00:00');
+      return { fetch, clock, transport: newHttpTransport(ENDPOINT, { fetch: fetch.fetch, clock }) };
+    };
+    const worker = newContext();
+    stubServiceWorker();
+    newExtensionCollector({ key: KEY, ...mode, clock: worker.clock, transport: worker.transport });
+    vi.stubGlobal('ServiceWorkerGlobalScope', undefined);
+    // The page's clock never moves, so the page never sends itself, as a popup closed right after an event.
+    const pageContext = newContext();
+    const page = newExtensionCollector({
+      key: KEY,
+      ...mode,
+      clock: pageContext.clock,
+      transport: pageContext.transport,
+    });
+    return { page, worker, pageFetch: pageContext.fetch, chrome };
+  }
+
+  it('go through the worker within the send delay, though the page sends nothing', async () => {
+    const { page, worker, pageFetch } = newWorkerAndPage();
+
+    await page.track('popup_opened');
+    await worker.clock.advance(SEND_DELAY_MS);
+
+    expect([worker.fetch.eventNames, pageFetch.requests]).toEqual([['popup_opened'], []]);
+  });
+
+  it('schedule no send for a change in another area, or for a stored queue that is no list of envelopes', async () => {
+    const { worker, chrome } = newWorkerAndPage();
+    const queueKey = `artel.${KEY}.queue`;
+    const queued = JSON.stringify([{ qid: 'a', envelope: { events: [{ name: 'a', day: '2026-10-29' }] } }]);
+    let flushes = 0;
+    chrome.storage.local.get = async (key) => {
+      flushes += key === queueKey ? 1 : 0;
+      return {};
+    };
+
+    for (const listener of chrome.changeListeners) {
+      listener({ [queueKey]: { newValue: queued } }, 'sync');
+      listener({ [queueKey]: { oldValue: 7, newValue: '{"a":1}' } }, 'local');
+    }
+    await worker.clock.advance(SEND_DELAY_MS);
+
+    expect(flushes).toBe(0);
+  });
+
+  it('make the worker send once, and its own writes to the queue schedule no more sends', async () => {
+    // An event that waits for the account id stays queued, and each send leases it again, which writes the queue.
+    let idCalls = 0;
+    const { page, worker } = newWorkerAndPage(() => (idCalls++, undefined));
+    await page.track('waiting');
+    await worker.clock.advance(SEND_DELAY_MS);
+    const callsOfTheSend = idCalls;
+
+    await worker.clock.advance(10 * 60_000);
+
+    expect([callsOfTheSend > 0, idCalls]).toEqual([true, callsOfTheSend]);
   });
 });
 

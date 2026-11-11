@@ -4,7 +4,7 @@ import { newMemoryStorage } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
 import { ENDPOINT, KEY, USER_ID } from '../tests/harness.js';
 import { stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
-import { hide, stubHideablePage } from '../tests/fakePage.js';
+import { stubListenedPage } from '../tests/fakePage.js';
 
 describe('newChromeStorageAdapter', () => {
   it('keeps string values in chrome.storage.local and answers undefined for others', async () => {
@@ -194,41 +194,20 @@ describe('the access level of chrome.storage.local', () => {
     return { chrome, errors };
   }
 
-  it.each(['visibilitychange', 'pagehide'])(
-    'sends the queue on its own when an extension page is hidden by %s',
-    async (event) => {
-      const fetch = new FakeFetch();
-      vi.stubGlobal('fetch', fetch.fetch);
-      stubChrome();
-      vi.stubGlobal('navigator', { language: 'pt-BR' });
-      const page = stubHideablePage();
-      const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
-      await usage.track('report_exported');
-
-      hide(page, event);
-
-      // The send delay is 5 seconds, longer than the wait, so only the hide sends.
-      await vi.waitFor(() => expect(fetch.eventNames).toEqual(['report_exported']));
-    },
-  );
-
-  it('adds no hide listener in the service worker', () => {
-    stubServiceWorker();
+  it.each([
+    ['an extension page', false],
+    ['the service worker', true],
+  ])('adds no listener to the page in %s', (_, isWorker) => {
+    if (isWorker) {
+      stubServiceWorker();
+    }
     stubChrome();
     vi.stubGlobal('navigator', { language: 'pt-BR' });
-    const page = stubHideablePage();
-    const added: string[] = [];
-    for (const target of [page.document, page.window]) {
-      const add = target.addEventListener.bind(target);
-      target.addEventListener = (type, listener) => {
-        added.push(type);
-        add(type, listener);
-      };
-    }
+    const listened = stubListenedPage();
 
     newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
 
-    expect(added).toEqual([]);
+    expect(listened).toEqual([]);
   });
 
   it('closes it to content scripts in the service worker', async () => {

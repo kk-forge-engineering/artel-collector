@@ -9,6 +9,7 @@ const EXTENSION_ID = 'faalhcmobmdfdmmniiplhoniamdooejf';
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
 type InstalledListener = (details: { reason: string }) => void;
+type ChangeListener = (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void;
 
 /** A Chrome extension context in memory: storage, messages between contexts and the uninstall page. */
 export class FakeChrome {
@@ -16,6 +17,7 @@ export class FakeChrome {
   readonly listeners = new Set<MessageListener>();
   readonly installedListeners = new Set<InstalledListener>();
   readonly startupListeners = new Set<() => void>();
+  readonly changeListeners = new Set<ChangeListener>();
   uninstallUrl = '';
   isWorkerGone = false;
   /** The access levels `chrome.storage.local.setAccessLevel` was called with. */
@@ -25,14 +27,23 @@ export class FakeChrome {
     local: {
       get: async (key: string): Promise<Record<string, unknown>> =>
         this.items.has(key) ? { [key]: this.items.get(key) } : {},
+      // Chrome tells every context of the extension of each write, the writer's own included.
       set: async (items: Record<string, unknown>): Promise<void> => {
+        const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
         for (const [key, value] of Object.entries(items)) {
+          changes[key] = { oldValue: this.items.get(key), newValue: value };
           this.items.set(key, value);
+        }
+        for (const listener of this.changeListeners) {
+          listener(changes, 'local');
         }
       },
       setAccessLevel: async (options: unknown): Promise<void> => {
         this.accessLevels.push(options);
       },
+    },
+    onChanged: {
+      addListener: (listener: ChangeListener): void => void this.changeListeners.add(listener),
     },
   };
 
