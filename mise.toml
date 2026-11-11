@@ -1,5 +1,3 @@
-# Tools and tasks of the repo. `mise tasks` lists them.
-
 [tools]
 node = "26"
 
