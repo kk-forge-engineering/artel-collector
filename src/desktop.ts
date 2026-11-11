@@ -1,4 +1,5 @@
 import { newCollector } from './collector.js';
+import { flushOnHide } from './flushOnHide.js';
 import type { Collector, CommonOptions, Delivery, Mode, ModeOptions } from './collectorTypes.js';
 import type { Platform } from './envelope.js';
 import type { StorageAdapter } from './storage.js';
@@ -36,10 +37,13 @@ export function newDesktopCollector(
 ): Collector<'anonymous'>;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector;
 export function newDesktopCollector(options: DesktopCollectorOptions): Collector {
-  return newCollector({
-    ...options,
-    storage: options.storage ?? newLocalStorageAdapter(),
-    lock: options.lock ?? newWebLock(),
-    browserLanguage: options.browserLanguage ?? navigator.language,
-  });
+  // A window closes as a page does.
+  return flushOnHide(
+    newCollector({
+      ...options,
+      storage: options.storage ?? newLocalStorageAdapter(),
+      lock: options.lock ?? newWebLock(),
+      browserLanguage: options.browserLanguage ?? navigator.language,
+    }),
+  );
 }

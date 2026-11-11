@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { newDesktopCollector, type DesktopCollectorOptions } from './desktop.js';
 import { newMemoryStorage } from './exports.js';
 import { FakeFetch } from '../tests/fakeFetch.js';
+import { hide, stubHideablePage } from '../tests/fakePage.js';
 import { DESKTOP_KEY, ENDPOINT, USER_ID, VERSION } from '../tests/harness.js';
 import { fromUntypedHost } from '../tests/untypedHost.js';
 
@@ -28,6 +29,21 @@ function stubWebview(): { items: Map<string, string>; lockNames: string[]; fetch
 }
 
 describe('newDesktopCollector', () => {
+  it.each(['visibilitychange', 'pagehide'])(
+    'sends the queue on its own when the window is hidden by %s',
+    async (event) => {
+      const { fetch } = stubWebview();
+      const page = stubHideablePage();
+      const usage = newDesktopCollector({ ...OPTIONS, mode: 'anonymous' });
+      await usage.track('report_exported');
+
+      hide(page, event);
+
+      // The send delay is 5 seconds, longer than the wait, so only the hide sends.
+      await vi.waitFor(() => expect(fetch.eventNames).toEqual(['report_exported']));
+    },
+  );
+
   it('sends its platform and the primary browser language, over localStorage and Web Locks', async () => {
     const { items, lockNames, fetch } = stubWebview();
     const usage = newDesktopCollector({ ...OPTIONS, mode: 'anonymous' });
