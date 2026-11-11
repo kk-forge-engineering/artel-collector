@@ -1,6 +1,6 @@
 # @kk-forge/artel-collector
 
-Sends a product's usage events to the intake service. It runs in a website, a web app, a Chrome extension or a desktop window, and has no runtime dependencies.
+Sends a product's analytics events to the intake service. It runs in a website, a web app, a Chrome extension or a desktop window, and has no runtime dependencies.
 
 The collector marks the first event of each local day, week, month, quarter and year, and adds the install age to those events, so the intake counts active users per period without a user id. The collector also keeps a session, holds every event in a queue in storage until the intake takes it, and keeps the user's analytics choice.
 
@@ -40,8 +40,6 @@ On a site, the events of the sending states also carry their page path, and the 
 
 Any site can read the browser and the full language tags. With the exact install age, and with the `platform` and `version` every envelope carries, these fields can single out a user, so only the states with an id, which need the user's consent, send them. Every envelope of those states carries the id. The uninstall query of those states carries the full languages and an exact age up to 31, with no id.
 
-A product with its own analytics switch calls `setState('opted_out')` once for each user who turned it off, then deletes the switch's stored value.
-
 ### Languages
 
 - `browserLanguage` is the user's language: the one the browser asks sites for, `navigator.language` by default on the web and in an extension.
@@ -68,13 +66,13 @@ const analytics = newDesktopCollector({ key, version, endpoint, platform, mode: 
 
 A channel of another mode passes it, and `getId` in the identified mode, such as `mode: 'identified', getId`. A site whose paths carry a secret or a person passes `getPage: () => ({ page: route.pattern, referrer: document.referrer })` to send the route pattern instead.
 
-Then the product tracks what the user does, and stores their choice when they make it, here in a pseudonymous channel:
+Then the product tracks what the user does, and sets the analytics state when the user picks one, here in a pseudonymous channel:
 
 ```ts
 const analytics = newWebCollector({ key, version, endpoint, mode: 'pseudonymous' });
 void analytics.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
 void analytics.setState(consented ? 'pseudonymous' : 'anonymous');
-void analytics.setState('opted_out'); // the user turned usage statistics off
+void analytics.setState('opted_out'); // the user turned analytics off
 ```
 
 The collectors do the rest themselves:
@@ -165,7 +163,7 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
 - `installed()` sends `installed` once per install. A later call sends no event. The extension's service worker and `newDesktopCollector` call it and `updated()` themselves, and a website calls it where its product counts an install. In the `opted_out` state it sends nothing and marks nothing, so a user who turns analytics back on still sends it.
 - `updated()` sends `updated` when `version` differs from the last version `installed()` or `updated()` stored, or when none is stored. Call it after `installed()`, so that a fresh install does not also count as an update. In the `opted_out` state it sends nothing and marks nothing.
-- `setState(state)` stores the user's choice and starts a new session, so events from before and after the change share no session. The same state again does nothing.
+- `setState(state)` stores the user's analytics state and starts a new session, so events from before and after the change share no session. The same state again does nothing.
   - To `opted_out`: stores the state first, then drops the events not sent yet and the last id `getId` gave, and sends one `opted_out`. It goes at once, or at the end of a retry wait that is running. An `opted_out` from an earlier opt-out that has not gone yet stays queued. The `opted_out` goes in an envelope of its own, with no id, no browser, no first-of-period mark and no age, so no count of active users takes it. Its session is new and no other event shares it. A run that stops after storing the state drops the queue on the first call of its next run. If that run stopped before it queued the `opted_out`, none is sent.
   - From `pseudonymous` or `identified`, to any other state: forgets the last id, as `forget(id)` does, and drops the queued events of that state, those waiting for an id included. A change between `pseudonymous` and `identified` thus counts as another user. Leaving `pseudonymous` also deletes the install id. A change to a state without an id stores the state first, and a run that stops after that forgets the last id on the first call of its next run. A change between `pseudonymous` and `identified` forgets the last id first, so a run that stops in between keeps the old state with its id forgotten.
   - A state above the channel's mode is refused: a type error, and `onError` in untyped code.

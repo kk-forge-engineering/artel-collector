@@ -1,6 +1,6 @@
 # artel-collector
 
-`@kk-forge/artel-collector`, the npm library a product uses to send its usage events to the intake service (idea-packer's `/v1/public/relay`). The intake's contract is its `GET /v1/public/schema`, and its code is `backend/relay` and `backend/product` in idea-packer. README.md is the library's own documentation.
+`@kk-forge/artel-collector`, the npm library a product uses to send its analytics events to the intake service (idea-packer's `/v1/public/relay`). The intake's contract is its `GET /v1/public/schema`, and its code is `backend/relay` and `backend/product` in idea-packer. README.md is the library's own documentation.
 
 ## Commands and release
 
