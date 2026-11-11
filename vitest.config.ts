@@ -9,11 +9,8 @@ export default defineConfig({
     env: { TZ: 'America/New_York' },
     unstubGlobals: true,
     reporters: ['default', ['vitest-sonar-reporter', { outputFile: 'coverage/test-report.xml' }]],
-    // On only under --coverage, which test:ci passes.
     coverage: {
-      provider: 'v8',
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts'],
       reporter: ['text-summary', 'lcovonly'],
       thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },
     },
