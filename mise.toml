@@ -39,7 +39,8 @@ run = "npm run test:unit"
 description = "Every test suite with coverage and the SonarQube reports"
 run = "npm run test:ci"
 
-[tasks.version]
-description = "The package's version, X.Y.Z on one line"
-quiet = true
-run = "node -p \"require('./package.json').version\""
+# The Release workflow packs in a job apart from the checks. This install runs no dependency's scripts, so none of
+# them runs where the tarball is made. npm pack builds the package in prepack.
+[tasks.pack]
+description = "Build the package and pack it into the repo root, as the Release workflow publishes it"
+run = ["npm ci --ignore-scripts", "npm pack"]
