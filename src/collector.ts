@@ -391,8 +391,8 @@ export function newCollector(options: CollectorOptions): Collector {
 }
 
 /**
- * Returns the transport of the envelopes and that of the forget requests. The intake's forget address replaces the last
- * segment of the relay path, `/v1/public/relay`. A product's own transport takes both kinds of request.
+ * Returns the transport of the envelopes and that of the forget requests. A product's own transport takes both kinds
+ * of request.
  */
 function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
   if (options.transport !== undefined) {
@@ -400,8 +400,18 @@ function transportsOf(options: CollectorOptions): { transport: Transport; forget
   }
   return {
     transport: newHttpTransport(options.endpoint),
-    forgetTransport: newHttpTransport(new URL('forget', options.endpoint).href),
+    forgetTransport: newHttpTransport(forgetUrlOf(options.endpoint)),
   };
+}
+
+/**
+ * Returns the intake's forget address: `endpoint` with `forget` in place of the last segment of its path, the relay's
+ * `relay`. A trailing slash goes with that segment. The query stays, since the envelopes go to `endpoint` with it.
+ */
+function forgetUrlOf(endpoint: string): string {
+  const url = new URL(endpoint);
+  url.pathname = url.pathname.replace(/[^/]*\/*$/, 'forget');
+  return url.href;
 }
 
 /** Returns the longest an event waits in the queue before a send starts, as the options set it. */

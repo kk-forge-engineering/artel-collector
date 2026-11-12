@@ -64,7 +64,12 @@ describe('leaving a state with an id', () => {
     expect(await harness.storage.get(LAST_ID_KEY)).toBe('');
   });
 
-  it('posts the forget to the forget address of the endpoint', async () => {
+  it.each([
+    ['as given', ENDPOINT, FORGET_URL],
+    ['with a trailing slash', `${ENDPOINT}/`, FORGET_URL],
+    ['with a query, which it keeps as the envelopes do', `${ENDPOINT}?region=eu`, `${FORGET_URL}?region=eu`],
+    ['with a trailing slash and a query', `${ENDPOINT}/?region=eu`, `${FORGET_URL}?region=eu`],
+  ])('posts the forget to the forget address of the endpoint %s', async (_case, endpoint, forgetUrl) => {
     const fetch = new FakeFetch();
     vi.stubGlobal('fetch', fetch.fetch);
     const collector = newCollector({
@@ -73,7 +78,7 @@ describe('leaving a state with an id', () => {
       version: VERSION,
       storage: newMemoryStorage(),
       clock: new FakeClock('2026-10-29T10:00:00'),
-      endpoint: `${ENDPOINT}?region=eu`,
+      endpoint,
       mode: Mode.Pseudonymous,
     });
     await collector.setState(AnalyticsState.Pseudonymous);
@@ -82,7 +87,8 @@ describe('leaving a state with an id', () => {
 
     await collector.setState(AnalyticsState.Anonymous);
 
-    expect(fetch.forgets.map((forget) => forget.url)).toEqual([FORGET_URL]);
+    expect(fetch.requests.map((request) => request.url)).toEqual([endpoint]);
+    expect(fetch.forgets.map((forget) => forget.url)).toEqual([forgetUrl]);
   });
 });
 
