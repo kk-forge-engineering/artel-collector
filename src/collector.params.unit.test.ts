@@ -158,7 +158,6 @@ describe('reading the params', () => {
           throw new Error('getter');
         },
       },
-      'could not be read',
     ],
     [
       'a proxy whose keys throw',
@@ -170,9 +169,8 @@ describe('reading the params', () => {
           },
         },
       ),
-      'could not be read',
     ],
-  ])('resolves and reports params with %s, and records nothing', async (_, params, problem) => {
+  ])('resolves and reports params with %s, and records nothing', async (_, params) => {
     const harness = newHarness();
 
     await expect(harness.collector.track('a', params)).resolves.toBeUndefined();
@@ -180,7 +178,7 @@ describe('reading the params', () => {
 
     expect(harness.fetch.requests).toEqual([]);
     expect(harness.errors.map((error) => String(error))).toEqual([
-      `Error: artel: event "a" has params that ${problem}, so it was not tracked`,
+      'Error: artel: event "a" has params that could not be read, so it was not tracked',
     ]);
   });
 });

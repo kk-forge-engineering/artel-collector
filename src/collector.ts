@@ -340,7 +340,7 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   const collector: Collector = {
     track: async (name, given, trackOptions) => {
       const calledAt = clock.now();
-      const event = acceptedEvent(name, given, trackOptions, reportError);
+      const event = acceptedEvent({ name, given, options: trackOptions, reportError });
       if (event === undefined) {
         return;
       }

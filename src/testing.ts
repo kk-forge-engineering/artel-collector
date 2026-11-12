@@ -56,7 +56,7 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
     events,
     track: async (name, given, options) => {
       const now = clock.now();
-      const event = acceptedEvent(name, given, options, reportError);
+      const event = acceptedEvent({ name, given, options, reportError });
       if (event === undefined) {
         return;
       }

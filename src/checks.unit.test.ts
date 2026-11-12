@@ -69,7 +69,6 @@ describe('checkEvent', () => {
           throw new Error('getter');
         },
       },
-      'has params that could not be read',
     ],
     [
       'a proxy whose keys throw',
@@ -81,9 +80,8 @@ describe('checkEvent', () => {
           },
         },
       ),
-      'has params that could not be read',
     ],
-  ])('returns the problem of params that are %s, and never throws', (_case, params, problem) => {
-    expect(checkEvent('report_exported', params)).toBe(problem);
+  ])('returns that params with %s could not be read, and never throws', (_case, params) => {
+    expect(checkEvent('report_exported', params)).toBe('has params that could not be read');
   });
 });

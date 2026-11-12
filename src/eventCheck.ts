@@ -59,12 +59,17 @@ export function checkEvent(name: unknown, params: unknown): string | undefined {
  * refuses the event and returns undefined. The copy is taken once, so a later change the host makes to its object
  * reaches neither the check nor the event.
  */
-export function acceptedEvent(
-  name: string,
-  given: EventParams | undefined,
-  options: TrackOptions | undefined,
-  reportError: (error: unknown) => void,
-): { params: EventParams | undefined; throttleMs: number | undefined } | undefined {
+export function acceptedEvent({
+  name,
+  given,
+  options,
+  reportError,
+}: {
+  name: string;
+  given: EventParams | undefined;
+  options: TrackOptions | undefined;
+  reportError: (error: unknown) => void;
+}): { params: EventParams | undefined; throttleMs: number | undefined } | undefined {
   const refuse = (problem: string, cause?: unknown): undefined => {
     const message = `artel: event ${quoted(name)} ${problem}, so it was not tracked`;
     reportError(cause === undefined ? new Error(message) : new Error(message, { cause }));

@@ -74,8 +74,8 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
   // The first event of a day changes the uninstall page's fields. The collector queues no event before it is built.
-  let refreshUninstallPage = (): void => undefined;
-  const onNewDay = (): void => refreshUninstallPage();
+  let refreshUninstallPage: (() => Promise<void>) | undefined;
+  const onNewDay = (): void => void refreshUninstallPage?.();
   const built =
     options.mode === Mode.Anonymous
       ? newCollectorNotingDays({ ...options, ...defaults }, onNewDay)
@@ -84,7 +84,7 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
           onNewDay,
         );
   const { collector, refresh } = withUninstallPage(built, options.uninstallPage, options.onError);
-  refreshUninstallPage = () => void refresh();
+  refreshUninstallPage = refresh;
   if (isWorker) {
     listenAsWorker(collector, {
       queueKey: `artel.${options.key}.${QUEUE_KEY}`,
