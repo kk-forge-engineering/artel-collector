@@ -12,7 +12,7 @@ import {
 } from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { checkEvent } from './eventCheck.js';
-import { quoted, reportTo } from './hostInput.js';
+import { reportTo } from './hostInput.js';
 import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
 import { newThrottle, throttleOf } from './throttle.js';
 import type { StorageAdapter } from './storage.js';
@@ -163,13 +163,14 @@ function withUninstallPage(
     const startedAt = changes;
     const earlier = writes;
     writes = (async () => {
-      await earlier;
+      // A failed write must not stop the next one, nor the `setState` that waits for it.
+      await earlier.catch(() => undefined);
       const fields = await params();
       if (startedAt === changes) {
         await setUninstallUrl(pageUrl, fields, onError);
       }
     })();
-    return writes;
+    return writes.catch((error: unknown) => reportTo(onError, error));
   };
   const refresh = (): Promise<void> => write(() => collector.uninstallParams());
   void refresh();
@@ -334,11 +335,9 @@ async function setUninstallUrl(
   params: UninstallParams | undefined,
   onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
-  if (!URL.canParse(pageUrl)) {
-    reportTo(onError, new TypeError(`artel: uninstallPage is not a URL: ${quoted(pageUrl)}`));
-    return;
-  }
   try {
+    // oxlint-disable-next-line no-new -- The constructor throws for a page that is not a URL. The page goes as written.
+    new URL(pageUrl);
     await chromeApi().runtime.setUninstallURL(withQueryAdded(pageUrl, params));
   } catch (error) {
     reportTo(onError, error);
