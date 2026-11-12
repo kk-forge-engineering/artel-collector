@@ -14,6 +14,7 @@ import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { checkEvent } from './eventCheck.js';
 import { quoted, reportTo } from './hostInput.js';
 import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
+import { newThrottle, throttleOf } from './throttle.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
 
@@ -268,10 +269,25 @@ export type ContentScriptCollector = Pick<Collector, 'track'>;
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
  * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
  * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
- * key, version or endpoint, and never throws.
+ * key, version or endpoint, and never throws. It applies `throttleMs` in its own memory, by `clock`, before it forwards
+ * an event. It has no `onError`, so it drops an event with a bad `throttleMs` without a report.
  */
-export function newContentScriptCollector(): ContentScriptCollector {
-  return { track: forwardTrack };
+export function newContentScriptCollector({ clock = systemClock }: { clock?: Clock } = {}): ContentScriptCollector {
+  const throttle = newThrottle();
+  return {
+    track: async (name, params, options) => {
+      const now = clock.now();
+      const asked = throttleOf(options);
+      if (asked === undefined || throttle.isDropped(name, asked.throttleMs, now)) {
+        return;
+      }
+      // The window opens for an event the worker takes. The worker alone knows the user's state.
+      if (isForwarded({ type: FORWARD_TYPE, name, params })) {
+        throttle.went(name, now);
+      }
+      await forwardTrack(name, params);
+    },
+  };
 }
 
 /**

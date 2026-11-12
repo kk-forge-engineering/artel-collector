@@ -18,6 +18,7 @@ import type {
   PageFields,
   StorageAdapter,
   TimerHandle,
+  TrackOptions,
   Transport,
   TransportResult,
   UninstallParams,
@@ -262,5 +263,11 @@ describe('the public API', () => {
     expectTypeOf(extension.newContentScriptCollector()).toEqualTypeOf<extension.ContentScriptCollector>();
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('setState');
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty('getState');
+  });
+
+  it("gives every track, a content script's included, the options of a throttle", () => {
+    expectTypeOf<Parameters<Collector['track']>[2]>().toEqualTypeOf<TrackOptions | undefined>();
+    expectTypeOf<Parameters<extension.ContentScriptCollector['track']>[2]>().toEqualTypeOf<TrackOptions | undefined>();
+    expectTypeOf<TrackOptions>().toEqualTypeOf<{ throttleMs?: number | undefined }>();
   });
 });

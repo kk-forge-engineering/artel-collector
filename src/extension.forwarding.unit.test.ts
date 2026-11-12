@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { forwardTrack, newContentScriptCollector } from './extension.js';
 import { newExtensionHarness, stubChrome, type ExtensionHarness } from '../tests/fakeChrome.js';
+import { FakeClock } from '../tests/fakeClock.js';
 
 const FROM_OTHER_EXTENSION = { id: 'abcdefghijklmnopabcdefghijklmnop' };
 
@@ -198,6 +199,36 @@ describe('newContentScriptCollector', () => {
     await harness.settle();
 
     expect([Object.keys(collector), harness.fetch.requests, chrome.items.size]).toEqual([['track'], [], 0]);
+  });
+
+  it('forwards the first of a series inside throttleMs, in its own memory, and again after the window', async () => {
+    const { chrome, harness } = startForwarding();
+    const forwarded: unknown[] = [];
+    const sendMessage = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async (message, sender) => (forwarded.push(message), sendMessage(message, sender));
+    const clock = new FakeClock('2026-10-29T10:00:00');
+    const collector = newContentScriptCollector({ clock });
+
+    for (const step of [0, 100, 399, 1, 100]) {
+      await clock.advance(step);
+      await collector.track('undo_pressed', undefined, { throttleMs: 400 });
+    }
+    await collector.track('redo_pressed', undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(forwarded).toHaveLength(3);
+    expect(harness.fetch.eventNames).toEqual(['undo_pressed', 'undo_pressed', 'redo_pressed']);
+  });
+
+  it('forwards nothing for a throttleMs that is no finite number from 0, and opens no window', async () => {
+    const { harness } = startForwarding();
+    const collector = newContentScriptCollector();
+
+    await collector.track('undo_pressed', undefined, { throttleMs: -1 });
+    await collector.track('undo_pressed', undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(['undo_pressed']);
   });
 
   it('throws nothing outside an extension or with no worker', async () => {

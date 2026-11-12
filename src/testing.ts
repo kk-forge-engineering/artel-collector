@@ -1,3 +1,4 @@
+import { systemClock, type Clock } from './clock.js';
 import { AnalyticsState, Mode, type Collector } from './collectorTypes.js';
 import type { EventParams } from './envelope.js';
 import { acceptedEvent } from './eventCheck.js';
@@ -5,6 +6,7 @@ import { isUsableId, quoted, reportTo } from './hostInput.js';
 import { parseQueue, QUEUE_KEY } from './queue.js';
 import { channelTakes } from './stateFields.js';
 import { newChannelStorage, type StorageAdapter } from './storage.js';
+import { newThrottle } from './throttle.js';
 
 /** One event as a product tracked it. */
 export interface RecordedEvent {
@@ -23,11 +25,18 @@ export type RecordingCollector<M extends Mode = Mode> = Collector<M> & {
  * real collector would send. Its user starts in the anonymous state. It refuses an event `track` refuses, a state above
  * the mode and an id `forget` refuses, with the same report to `onError`. It records `opted_out` at the opt-out, and
  * nothing in the opted_out state. It keeps one version: `installed` records once, and `updated` only while neither of
- * them recorded. `uninstallParams` resolves to undefined.
+ * them recorded. It drops an event by `throttleMs` as `track` does, by `clock`. `uninstallParams` resolves to undefined.
  */
 export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
   mode?: M,
-  { onError }: { onError?: (error: Error) => void } = {},
+  {
+    onError,
+    clock = systemClock,
+  }: {
+    onError?: (error: Error) => void;
+    /** The clock of the `throttleMs` windows of `track`, the system's by default. */
+    clock?: Clock;
+  } = {},
 ): RecordingCollector<M> {
   const channelMode: Mode = mode ?? Mode.Anonymous;
   const reportError = (error: unknown): void => reportTo(onError, error);
@@ -35,17 +44,21 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
   let state: AnalyticsState = AnalyticsState.Anonymous;
   let isInstalled = false;
   let isVersionMarked = false;
-  const record = (name: string, params?: EventParams): void => {
-    if (state !== AnalyticsState.OptedOut) {
-      events.push({ name, ...(params !== undefined && { params }) });
+  const throttle = newThrottle();
+  const record = (name: string, params?: EventParams): boolean => {
+    if (state === AnalyticsState.OptedOut) {
+      return false;
     }
+    events.push({ name, ...(params !== undefined && { params }) });
+    return true;
   };
   return {
     events,
-    track: async (name, given) => {
-      const event = acceptedEvent(name, given, reportError);
-      if (event !== undefined) {
-        record(name, event.params);
+    track: async (name, given, options) => {
+      const now = clock.now();
+      const event = acceptedEvent(name, given, options, reportError);
+      if (event !== undefined && !throttle.isDropped(name, event.throttleMs, now) && record(name, event.params)) {
+        throttle.went(name, now);
       }
     },
     installed: async () => {

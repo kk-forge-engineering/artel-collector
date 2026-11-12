@@ -1,6 +1,7 @@
-import { ActiveDaysBucket } from './collectorTypes.js';
+import { ActiveDaysBucket, type TrackOptions } from './collectorTypes.js';
 import { LifecycleEvent, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { quoted } from './hostInput.js';
+import { throttleOf } from './throttle.js';
 
 /** The form the intake takes for an event name and a param name. */
 const NAME_FORMAT = /^[a-z][a-z\d_]{0,39}$/;
@@ -54,14 +55,16 @@ export function checkEvent(name: unknown, params: unknown): string | undefined {
 }
 
 /**
- * Returns a copy of the params of an event `track` takes, or reports why it refuses the event and returns undefined.
- * The copy is taken once, so a later change the host makes to its object reaches neither the check nor the event.
+ * Returns a copy of the params of an event `track` takes, with the `throttleMs` of its options, or reports why it
+ * refuses the event and returns undefined. The copy is taken once, so a later change the host makes to its object
+ * reaches neither the check nor the event.
  */
 export function acceptedEvent(
   name: string,
   given: EventParams | undefined,
+  options: TrackOptions | undefined,
   reportError: (error: unknown) => void,
-): { params: EventParams | undefined } | undefined {
+): { params: EventParams | undefined; throttleMs: number | undefined } | undefined {
   const refuse = (problem: string, cause?: unknown): undefined => {
     const message = `artel: event ${quoted(name)} ${problem}, so it was not tracked`;
     reportError(cause === undefined ? new Error(message) : new Error(message, { cause }));
@@ -74,7 +77,13 @@ export function acceptedEvent(
     return refuse(UNREADABLE_PARAMS, error);
   }
   const problem = checkEvent(name, params);
-  return problem === undefined ? { params } : refuse(problem);
+  if (problem !== undefined) {
+    return refuse(problem);
+  }
+  const throttle = throttleOf(options);
+  return throttle === undefined
+    ? refuse('has a throttleMs that is not a finite number from 0')
+    : { params, throttleMs: throttle.throttleMs };
 }
 
 /**

@@ -21,6 +21,7 @@ import { newOutbox } from './outbox.js';
 import { newPageReader, type PageRead, type PageReader } from './page.js';
 import type { Identity, QueuedEnvelope } from './queue.js';
 import { carriesPage, channelTakes, fieldsForState, isAnalyticsState, type StateFields } from './stateFields.js';
+import { newThrottle } from './throttle.js';
 import { newHttpTransport, type Transport } from './transport.js';
 
 const SESSION_IDLE_MINUTES = 10;
@@ -76,6 +77,8 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
     ? newPageReader({ getPage: options.getPage, reportError })
     : undefined;
   const pageOf = (name: string): PageRead | undefined => pages?.read(name);
+
+  const throttle = newThrottle();
 
   // The install day is the local date of the first call of any method, so it waits on no particular event.
   let isInstallDayKnown = false;
@@ -326,13 +329,24 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   }
 
   const collector: Collector = {
-    track: async (name, given) => {
-      const event = acceptedEvent(name, given, reportError);
+    track: async (name, given, trackOptions) => {
+      const calledAt = clock.now();
+      const event = acceptedEvent(name, given, trackOptions, reportError);
       if (event === undefined) {
         return;
       }
       const page = pageOf(name);
-      await serialize(async () => record({ name, params: event.params, page }), false);
+      await serialize(async () => {
+        // The check and the mark run in the lock, so two calls in quick turn never both pass an open window.
+        if (throttle.isDropped(name, event.throttleMs, calledAt)) {
+          return false;
+        }
+        const isRecorded = await record({ name, params: event.params, page });
+        if (isRecorded) {
+          throttle.went(name, calledAt);
+        }
+        return isRecorded;
+      }, false);
     },
 
     // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.
