@@ -1,4 +1,4 @@
-import { daysBetween, formatDay, localDateAt } from './calendar.js';
+import { daysBetween, formatDay, localDateAt, Period } from './calendar.js';
 import { LifecycleEvent, UNINSTALLED, type EventParams, type UsageEvent } from './envelope.js';
 import { activeDaysBucket, ageInDays, isLanguage, languageTag, newEvent, uninstalledParams } from './fields.js';
 import {
@@ -33,6 +33,14 @@ const SEND_DELAY_SECONDS = 5;
  */
 export function newCollector<M extends Mode>(options: CollectorOptions & { mode: M }): Collector<M>;
 export function newCollector(options: CollectorOptions): Collector {
+  return newCollectorNotingDays(options, () => undefined);
+}
+
+/**
+ * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first event
+ * of a local day. That event counts the day among the active days.
+ */
+export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () => void): Collector {
   const product = checkedBuild(options);
   const { mode } = options;
   const transports = transportsOf(options);
@@ -242,8 +250,10 @@ export function newCollector(options: CollectorOptions): Collector {
     }
     let event: UsageEvent | undefined;
     let dropped: QueuedEnvelope[];
+    let isNewDay = false;
     try {
       const stamp = await install.stamp(clock.now());
+      isNewDay = stamp.first.includes(Period.Day);
       event = newEvent({
         name,
         // The `uninstalled` age gets the precision of the envelope's ages, so a state that sends no exact age does not
@@ -274,6 +284,9 @@ export function newCollector(options: CollectorOptions): Collector {
       throw error;
     }
     view?.recorded();
+    if (isNewDay) {
+      onNewDay();
+    }
     // The queue holds the event by now, so a failure here keeps its marks.
     await giveBack(dropped);
     return true;

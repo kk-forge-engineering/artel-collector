@@ -258,6 +258,33 @@ describe('uninstallPage', () => {
     expect(urls.map((url) => new URL(url).searchParams.has('age_days'))).toEqual([true]);
   });
 
+  it('counts the install day once installed is recorded on it', async () => {
+    const { chrome } = newExtensionHarness({ isWorker: true, uninstallPage: UNINSTALL_PAGE });
+    await expect.poll(() => chrome.uninstallUrl).toContain('active_days=0');
+
+    chrome.install('install');
+
+    await expect.poll(() => new URL(chrome.uninstallUrl).searchParams.get('active_days')).toBe('1');
+  });
+
+  it('sets the page again after the first event of a new day, and not after a later event of that day', async () => {
+    const { chrome, clock, collector } = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
+    await collector.track('a');
+    await expect.poll(() => chrome.uninstallUrl).toContain('active_days=1');
+    const urls: string[] = [];
+    chrome.runtime.setUninstallURL = async (url) => void urls.push(url);
+    await clock.advance(24 * 60 * 60_000);
+
+    await collector.track('b');
+    await expect.poll(() => urls).toHaveLength(1);
+    await collector.track('c');
+    await collector.getState();
+
+    expect(urls.map((url) => Object.fromEntries(new URL(url).searchParams))).toEqual([
+      expect.objectContaining({ age_days: '1', active_days: '2-5' }),
+    ]);
+  });
+
   it('sets no uninstall page without the option', async () => {
     const { chrome, collector } = newExtensionHarness({ isWorker: true });
 

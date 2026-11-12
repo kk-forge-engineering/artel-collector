@@ -1,6 +1,6 @@
 import { detectBrowser } from './browser.js';
 import { systemClock, type Clock } from './clock.js';
-import { newCollector, sendDelayMsOf } from './collector.js';
+import { newCollectorNotingDays, sendDelayMsOf } from './collector.js';
 import {
   AnalyticsState,
   Mode,
@@ -42,7 +42,8 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
   version?: string | undefined;
   /**
    * The address of the page Chrome opens when the user removes the extension. The collector sets it with the fields of
-   * `uninstallParams()` in its query at construction and after each `setState`. Left out, the collector sets none.
+   * `uninstallParams()` in its query at construction, after each `setState` and after the first event of a local day.
+   * Left out, the collector sets none.
    */
   uninstallPage?: string | undefined;
   /** An extension sends no page. */
@@ -71,11 +72,18 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
+  // The first event of a day changes the uninstall page's fields. The collector queues no event before it is built.
+  let refreshUninstallPage = (): void => undefined;
+  const onNewDay = (): void => refreshUninstallPage();
   const built =
     options.mode === Mode.Anonymous
-      ? newCollector({ ...options, ...defaults })
-      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
-  const collector = withUninstallPage(built, options.uninstallPage, options.onError);
+      ? newCollectorNotingDays({ ...options, ...defaults }, onNewDay)
+      : newCollectorNotingDays(
+          { ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) },
+          onNewDay,
+        );
+  const { collector, refresh } = withUninstallPage(built, options.uninstallPage, options.onError);
+  refreshUninstallPage = () => void refresh();
   if (isWorker) {
     listenAsWorker(collector, {
       queueKey: `artel.${options.key}.${QUEUE_KEY}`,
@@ -134,16 +142,17 @@ function listenAsWorker(
 }
 
 /**
- * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given. Chrome
- * keeps the address as it was set, so the query must follow the user's state.
+ * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given, and
+ * `refresh`, which sets it again. Chrome keeps the address as it was set, so the query must follow the user's state
+ * and the active days.
  */
 function withUninstallPage(
   collector: Collector,
   pageUrl: string | undefined,
   onError: ((error: Error) => void) | undefined,
-): Collector {
+): { collector: Collector; refresh: () => Promise<void> } {
   if (pageUrl === undefined) {
-    return collector;
+    return { collector, refresh: async () => undefined };
   }
   // Every write of this context goes in turn on one chain. A write that started before the latest `setState` is
   // dropped, so a slow refresh never puts back the fields of a state the user has left.
@@ -164,17 +173,20 @@ function withUninstallPage(
   const refresh = (): Promise<void> => write(() => collector.uninstallParams());
   void refresh();
   return {
-    ...collector,
-    setState: async (state) => {
-      changes++;
-      if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
-        // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the page
-        // must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
-        await write(async () => undefined);
-      }
-      await collector.setState(state);
-      await refresh();
+    collector: {
+      ...collector,
+      setState: async (state) => {
+        changes++;
+        if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
+          // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the
+          // page must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
+          await write(async () => undefined);
+        }
+        await collector.setState(state);
+        await refresh();
+      },
     },
+    refresh,
   };
 }
 
