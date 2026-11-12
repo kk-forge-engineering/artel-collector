@@ -1,3 +1,6 @@
 {
-  "extends": ["./node_modules/@kk-forge/oxlint-config/base.json"]
+  "extends": [
+    "./node_modules/@kk-forge/oxlint-config/base.json",
+    "./node_modules/@kk-forge/oxlint-config/slices.json"
+  ]
 }
