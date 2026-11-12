@@ -67,8 +67,8 @@ interface Outbox {
 }
 
 /**
- * Expects the caller to run `add`, `discard`, `forget`, `discardIdentified` and `holdsRequests` inside its own `lock`, which it holds
- * for the whole recording of an event. The sends take the lock themselves.
+ * Expects the caller to run `add`, `discard`, `forget`, `discardIdentified` and `holdsRequests` inside its own `lock`,
+ * which it holds for the whole recording of an event. The sends take the lock themselves.
  */
 export function newOutbox({
   key,

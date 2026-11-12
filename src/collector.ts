@@ -22,7 +22,7 @@ import { newPageReader, type PageRead, type PageReader } from './page.js';
 import type { Identity, QueuedEnvelope } from './queue.js';
 import { carriesPage, channelTakes, fieldsForState, isAnalyticsState, type StateFields } from './stateFields.js';
 import { newThrottle } from './throttle.js';
-import { newHttpTransport, type Transport } from './transport.js';
+import { transportsOf } from './transport.js';
 
 const SESSION_IDLE_MINUTES = 10;
 const SEND_DELAY_SECONDS = 5;
@@ -83,21 +83,29 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   // The install day is the local date of the first call of any method, so it waits on no particular event.
   let isInstallDayKnown = false;
 
+  /**
+   * Stores the install day, settles the stored state and schedules the first send, once per collector. The caller
+   * holds the lock.
+   */
+  async function startOnce(): Promise<void> {
+    if (isInstallDayKnown) {
+      return;
+    }
+    await install.installDayOr(localDateAt(clock.now()));
+    await settleStoredState();
+    isInstallDayKnown = true;
+    // The first send carries what an earlier run of the host left queued. A run stopped mid-send holds a lease, and its
+    // events go with the first send after the lease runs out.
+    outbox.sendSoon();
+  }
+
   function serialize<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
-    const withInstallDay = async (): Promise<T> => {
-      if (!isInstallDayKnown) {
-        await install.installDayOr(localDateAt(clock.now()));
-        await settleStoredState();
-        isInstallDayKnown = true;
-        // The first send carries what an earlier run of the host left queued. A run stopped mid-send holds a lease, and
-        // its events go with the first send after the lease runs out.
-        outbox.sendSoon();
-      }
-      return operation();
-    };
     // Each operation reads and writes several storage keys. The lock keeps two events from both taking the same
     // first-of-day mark.
-    return lock(withInstallDay).catch((error: unknown) => {
+    return lock(async () => {
+      await startOnce();
+      return operation();
+    }).catch((error: unknown) => {
       reportError(error);
       return fallback;
     });
@@ -317,15 +325,16 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   }
 
   /**
-   * Schedules a send when the storage holds requests, such as the events of a page or a window that closed before its
-   * send. The first call of the collector schedules it, after it settles the stored state.
+   * Runs at construction. When the storage holds requests, such as the events of a page or a window that closed before
+   * its send, it runs `startOnce`, which settles the stored state before it schedules the send.
    */
   async function sendWhatIsLeft(): Promise<void> {
-    // A storage that fails here fails the next call too, and that call reports it once.
-    const isLeft = await lock(() => outbox.holdsRequests()).catch(() => false);
-    if (isLeft) {
-      await serialize(async () => undefined, undefined);
-    }
+    await lock(async () => {
+      // A storage that fails here fails the next call too, and that call reports it once.
+      if (await outbox.holdsRequests().catch(() => false)) {
+        await startOnce();
+      }
+    }).catch(reportError);
   }
 
   const collector: Collector = {
@@ -429,30 +438,6 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   };
   void sendWhatIsLeft();
   return collector;
-}
-
-/**
- * Returns the transport of the envelopes and that of the forget requests. A product's own transport takes both kinds
- * of request.
- */
-function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
-  if (options.transport !== undefined) {
-    return { transport: options.transport, forgetTransport: options.transport };
-  }
-  return {
-    transport: newHttpTransport(options.endpoint),
-    forgetTransport: newHttpTransport(forgetUrlOf(options.endpoint)),
-  };
-}
-
-/**
- * Returns the intake's forget address: `endpoint` with `forget` in place of the last segment of its path, the relay's
- * `relay`. A trailing slash goes with that segment. The query stays, since the envelopes go to `endpoint` with it.
- */
-function forgetUrlOf(endpoint: string): string {
-  const url = new URL(endpoint);
-  url.pathname = url.pathname.replace(/[^/]*\/*$/, 'forget');
-  return url.href;
 }
 
 /** Returns the longest an event waits in the queue before a send starts, as the options set it. */

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { AnalyticsState, Platform, type StorageAdapter } from './exports.js';
-import { DESKTOP_KEY, KEY, newHarness, SEND_DELAY_MS, SITE_KEY, storageKey } from '../tests/harness.js';
+import { AnalyticsState, newMemoryStorage, Platform, type StorageAdapter } from './exports.js';
+import {
+  DESKTOP_KEY,
+  FORGET_URL,
+  KEY,
+  newHarness,
+  SEND_DELAY_MS,
+  SITE_KEY,
+  storageKey,
+  USER_ID,
+} from '../tests/harness.js';
 
 const PLATFORM_KEYS = [
   [Platform.Web, SITE_KEY],
@@ -38,6 +47,16 @@ describe('a queue an earlier page or window left', () => {
     await clock.advance(60_000);
 
     expect([sentBeforeRetry, fetch.eventNames]).toEqual([0, ['a']]);
+  });
+
+  it('sends a stored forget request when the queue holds nothing else', async () => {
+    const storage = newMemoryStorage();
+    await storage.set(storageKey('forgets', SITE_KEY), JSON.stringify([USER_ID]));
+
+    const { clock, fetch } = newHarness({ platform: Platform.Web, storage });
+    await clock.advance(SEND_DELAY_MS);
+
+    expect(fetch.forgets).toEqual([{ url: FORGET_URL, key: SITE_KEY, id: USER_ID }]);
   });
 
   it('never goes once the stored state is opted_out', async () => {

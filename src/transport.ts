@@ -1,4 +1,5 @@
 import { systemClock, type Clock } from './clock.js';
+import type { CollectorOptions } from './collectorTypes.js';
 
 /** What the intake answered: its HTTP status, 0 when the request did not reach it, and its `Retry-After` header. */
 export interface TransportResult {
@@ -54,4 +55,28 @@ export function newHttpTransport(
       clock.clearTimeout(timer);
     }
   };
+}
+
+/**
+ * Returns the transport of the envelopes and that of the forget requests. A product's own transport takes both kinds
+ * of request.
+ */
+export function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
+  if (options.transport !== undefined) {
+    return { transport: options.transport, forgetTransport: options.transport };
+  }
+  return {
+    transport: newHttpTransport(options.endpoint),
+    forgetTransport: newHttpTransport(forgetUrlOf(options.endpoint)),
+  };
+}
+
+/**
+ * Returns the intake's forget address: `endpoint` with `forget` in place of the last segment of its path, the relay's
+ * `relay`. A trailing slash goes with that segment. The query stays, since the envelopes go to `endpoint` with it.
+ */
+function forgetUrlOf(endpoint: string): string {
+  const url = new URL(endpoint);
+  url.pathname = url.pathname.replace(/[^/]*\/*$/, 'forget');
+  return url.href;
 }
