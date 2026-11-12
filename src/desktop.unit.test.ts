@@ -39,13 +39,15 @@ function stubWebview(): { items: Map<string, string>; lockNames: string[]; fetch
 }
 
 describe("newDesktopCollector", () => {
-  it("adds no listener to the window: a send at hide would not finish before the window is gone", () => {
+  it("adds no listener to the window: a send at hide would not finish before the window is gone", async () => {
     stubWebview();
     const listened = stubListenedPage();
 
-    newDesktopCollector({ ...OPTIONS, mode: "anonymous" });
+    const collector = newDesktopCollector({ ...OPTIONS, mode: "anonymous" });
 
     expect(listened).toEqual([]);
+    // The collector reads `localStorage` when it runs, so its start must end before the next test stubs another one.
+    await collector.getState();
   });
 
   it("sends installed on its first start and updated on the first start of another version", async () => {

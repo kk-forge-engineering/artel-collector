@@ -20,6 +20,19 @@ import { ENDPOINT, KEY, SEND_DELAY_MS } from "../tests/harness.js";
 
 const UNINSTALL_PAGE = "https://example.com/uninstall?product=demo";
 
+/** Runs `run` while `URL` has no `canParse`, as in Chrome before 120, and puts it back after. */
+async function withoutCanParse<T>(run: () => Promise<T>): Promise<T> {
+  const canParse = Object.getOwnPropertyDescriptor(URL, "canParse");
+  Reflect.deleteProperty(URL, "canParse");
+  try {
+    return await run();
+  } finally {
+    if (canParse !== undefined) {
+      Object.defineProperty(URL, "canParse", canParse);
+    }
+  }
+}
+
 describe("the service worker collector", () => {
   it("sends installed when Chrome installs the extension, and updated when Chrome updates it to a new version", async () => {
     const storage = newMemoryStorage();
@@ -107,6 +120,8 @@ describe("the events an extension page queues", () => {
 
   it("schedule no send for a change in another area, or for a stored queue that is no list of envelopes", async () => {
     const { worker, chrome } = newWorkerAndPage();
+    // Each collector reads the stored queue once at construction, before the test counts the reads.
+    await worker.clock.advance(0);
     const queueKey = `artel.${KEY}.queue`;
     const queued = JSON.stringify([
       { qid: "a", envelope: { events: [{ name: "a", day: "2026-10-29" }] } },
@@ -166,6 +181,39 @@ describe("uninstallPage", () => {
       active_days: "0",
     });
   });
+
+  it.each([
+    ["without a query", "https://example.com/uninstall", "?", ""],
+    [
+      "with a query of its own",
+      "https://example.com/uninstall?b=2&a=1&flag&q=a%20b+c&version=x",
+      "&",
+      "",
+    ],
+    ["with an empty query", "https://example.com/uninstall?", "", ""],
+    ["with a query that ends in &", "https://example.com/uninstall?a=1&", "", ""],
+    ["with a fragment", "https://example.com/uninstall", "?", "#top"],
+    [
+      "with a query and a fragment that holds ?",
+      "https://example.com/uninstall?a=1",
+      "&",
+      "#top?x=1",
+    ],
+    ["with non-ASCII characters, as written", "https://example.com/désinstaller?q=é", "&", ""],
+  ])(
+    "adds the parameters to a page %s and leaves the page as it was",
+    async (_case, beforeFragment, joiner, fragment) => {
+      const { chrome } = newExtensionHarness({
+        isWorker: true,
+        uninstallPage: `${beforeFragment}${fragment}`,
+      });
+
+      await expect.poll(() => chrome.uninstallUrl).not.toBe("");
+      expect(chrome.uninstallUrl).toBe(
+        `${beforeFragment}${joiner}platform=extension&version=3.1.0&browser_language=pt&age_days=0&active_days=0${fragment}`,
+      );
+    },
+  );
 
   it("sets it again after each setState, to the page alone in the opted_out state", async () => {
     const { chrome, collector } = newExtensionHarness({
@@ -267,6 +315,46 @@ describe("uninstallPage", () => {
     await collector.setState(AnalyticsState.Pseudonymous);
 
     expect(urls.map((url) => new URL(url).searchParams.has("age_days"))).toEqual([true]);
+  });
+
+  it("counts the install day once installed is recorded on it", async () => {
+    const { chrome } = newExtensionHarness({ isWorker: true, uninstallPage: UNINSTALL_PAGE });
+    await expect.poll(() => chrome.uninstallUrl).toContain("active_days=0");
+
+    chrome.install("install");
+
+    await expect.poll(() => new URL(chrome.uninstallUrl).searchParams.get("active_days")).toBe("1");
+  });
+
+  it("sets the page again after the first event of a new day, and not after a later event of that day", async () => {
+    const { chrome, clock, collector } = newExtensionHarness({
+      isWorker: false,
+      uninstallPage: UNINSTALL_PAGE,
+    });
+    await collector.track("a");
+    await expect.poll(() => chrome.uninstallUrl).toContain("active_days=1");
+    const urls: string[] = [];
+    chrome.runtime.setUninstallURL = async (url) => void urls.push(url);
+    await clock.advance(24 * 60 * 60_000);
+
+    await collector.track("b");
+    await expect.poll(() => urls).toHaveLength(1);
+    await collector.track("c");
+    await collector.getState();
+
+    expect(urls.map((url) => Object.fromEntries(new URL(url).searchParams))).toEqual([
+      expect.objectContaining({ age_days: "1", active_days: "2-5" }),
+    ]);
+  });
+
+  it("stores an opt-out on a Chrome without URL.canParse, which came in Chrome 120", async () => {
+    const { state, errors } = await withoutCanParse(async () => {
+      const harness = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
+      await harness.collector.setState(AnalyticsState.OptedOut);
+      return { state: await harness.collector.getState(), errors: harness.errors };
+    });
+
+    expect([state, errors]).toEqual([AnalyticsState.OptedOut, []]);
   });
 
   it("sets no uninstall page without the option", async () => {

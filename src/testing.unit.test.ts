@@ -99,6 +99,42 @@ describe("newRecordingCollector", () => {
     expect(errors).toHaveLength(2);
   });
 
+  it("drops and refuses tracked events by throttleMs as the real collector does", async () => {
+    const real = newHarness();
+    const recordingErrors: Error[] = [];
+    const recording = newRecordingCollector(Mode.Anonymous, {
+      onError: (error) => recordingErrors.push(error),
+      clock: real.clock,
+    });
+    const calls = [
+      [0, "undo_pressed", 400],
+      [100, "undo_pressed", 400],
+      [0, "undo_pressed", undefined],
+      [0, "redo_pressed", undefined],
+      [0, "redo_pressed", 400],
+      [0, "redo_pressed", -1],
+      [300, "undo_pressed", 400],
+      [0, "undo_pressed", 400],
+    ] as const;
+    for (const [step, name, throttleMs] of calls) {
+      await real.clock.advance(step);
+      await recording.track(name, undefined, { throttleMs });
+      await real.collector.track(name, undefined, { throttleMs });
+    }
+    await real.collector.flush();
+
+    expect(recording.events.map((event) => event.name)).toEqual(real.fetch.eventNames);
+    expect(recording.events.map((event) => event.name)).toEqual([
+      "undo_pressed",
+      "undo_pressed",
+      "redo_pressed",
+      "redo_pressed",
+      "undo_pressed",
+    ]);
+    expect(recordingErrors).toEqual(real.errors);
+    expect(recordingErrors).toHaveLength(1);
+  });
+
   it("refuses a state above its mode", async () => {
     const errors: Error[] = [];
     const collector = newRecordingCollector(Mode.Anonymous, {

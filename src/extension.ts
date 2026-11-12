@@ -1,6 +1,6 @@
 import { detectBrowser } from "./browser.js";
 import { systemClock, type Clock } from "./clock.js";
-import { newCollector, sendDelayMsOf } from "./collector.js";
+import { newCollectorNotingDays, sendDelayMsOf } from "./collector.js";
 import {
   AnalyticsState,
   Mode,
@@ -14,6 +14,7 @@ import { Platform, SYSTEM_EVENTS, type EventParams } from "./envelope.js";
 import { checkEvent } from "./eventCheck.js";
 import { reportTo } from "./hostInput.js";
 import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from "./queue.js";
+import { newThrottle, throttleOf } from "./throttle.js";
 import type { StorageAdapter } from "./storage.js";
 import { newWebLock } from "./web.js";
 
@@ -42,7 +43,8 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, "storage" | "version
   version?: string | undefined;
   /**
    * The address of the page Chrome opens when the user removes the extension. The collector sets it with the fields of
-   * `uninstallParams()` in its query at construction and after each `setState`. Left out, the collector sets none.
+   * `uninstallParams()` in its query at construction, after each `setState` and after the first event of a local day.
+   * Left out, the collector sets none.
    */
   uninstallPage?: string | undefined;
   /** An extension sends no page. */
@@ -73,15 +75,19 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
+  // `onNewDay` refreshes the uninstall page, since a day's first event changes its `active_days`. The collector queues
+  // no event before `refreshUninstallPage` is set below.
+  let refreshUninstallPage: (() => Promise<void>) | undefined;
+  const onNewDay = (): void => void refreshUninstallPage?.();
   const built =
     options.mode === Mode.Anonymous
-      ? newCollector({ ...options, ...defaults })
-      : newCollector({
-          ...options,
-          ...defaults,
-          browser: options.browser ?? (() => detectBrowser(navigator)),
-        });
-  const collector = withUninstallPage(built, options.uninstallPage, options.onError);
+      ? newCollectorNotingDays({ ...options, ...defaults }, onNewDay)
+      : newCollectorNotingDays(
+          { ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) },
+          onNewDay,
+        );
+  const { collector, refresh } = withUninstallPage(built, options.uninstallPage, options.onError);
+  refreshUninstallPage = refresh;
   if (isWorker) {
     listenAsWorker(collector, {
       queueKey: `artel.${options.key}.${QUEUE_KEY}`,
@@ -140,16 +146,17 @@ function listenAsWorker(
 }
 
 /**
- * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given. Chrome
- * keeps the address as it was set, so the query must follow the user's state.
+ * Returns the collector, which sets the uninstall page now and after each `setState` when `pageUrl` is given, and
+ * `refresh`, which sets it again. Chrome keeps the address as it was set, so the query must follow the user's state
+ * and the active days.
  */
 function withUninstallPage(
   collector: Collector,
   pageUrl: string | undefined,
   onError: ((error: Error) => void) | undefined,
-): Collector {
+): { collector: Collector; refresh: () => Promise<void> } {
   if (pageUrl === undefined) {
-    return collector;
+    return { collector, refresh: async () => undefined };
   }
   // Every write of this context goes in turn on one chain. A write that started before the latest `setState` is
   // dropped, so a slow refresh never puts back the fields of a state the user has left.
@@ -159,28 +166,32 @@ function withUninstallPage(
     const startedAt = changes;
     const earlier = writes;
     writes = (async () => {
-      await earlier;
+      // A failed write must not stop the next one, nor the `setState` that waits for it.
+      await earlier.catch(() => undefined);
       const fields = await params();
       if (startedAt === changes) {
         await setUninstallUrl(pageUrl, fields, onError);
       }
     })();
-    return writes;
+    return writes.catch((error: unknown) => reportTo(onError, error));
   };
   const refresh = (): Promise<void> => write(() => collector.uninstallParams());
   void refresh();
   return {
-    ...collector,
-    setState: async (state) => {
-      changes++;
-      if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
-        // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the page
-        // must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
-        await write(async () => undefined);
-      }
-      await collector.setState(state);
-      await refresh();
+    collector: {
+      ...collector,
+      setState: async (state) => {
+        changes++;
+        if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
+          // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the
+          // page must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
+          await write(async () => undefined);
+        }
+        await collector.setState(state);
+        await refresh();
+      },
     },
+    refresh,
   };
 }
 
@@ -270,13 +281,34 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
 export type ContentScriptCollector = Pick<Collector, "track">;
 
 /**
- * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
- * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
- * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
- * key, version or endpoint, and never throws.
+ * Returns the collector of a content script. Its `track` applies a call's `throttleMs` in the script's memory, by
+ * `clock`, then hands the event to the worker with `forwardTrack`. The worker checks, queues and sends it under the
+ * user's analytics state, which a content script can neither read nor change. It reads no storage, needs no key,
+ * version or endpoint, never throws, and drops a call with a bad `throttleMs` without a report, having no `onError`.
  */
-export function newContentScriptCollector(): ContentScriptCollector {
-  return { track: forwardTrack };
+export function newContentScriptCollector({
+  clock = systemClock,
+}: { clock?: Clock } = {}): ContentScriptCollector {
+  const throttle = newThrottle();
+  return {
+    track: async (name, params, options) => {
+      const now = clock.now();
+      const asked = throttleOf(options);
+      if (asked === undefined) {
+        return;
+      }
+      const call = { name, throttleMs: asked.throttleMs, now };
+      if (throttle.isDropped(call)) {
+        return;
+      }
+      // The window opens for an event that passes the worker's check. Only the worker knows the user's state, so an
+      // event the worker drops in the opted_out state opens a window too.
+      if (isForwardable(name, params)) {
+        throttle.went(call);
+      }
+      await forwardTrack(name, params);
+    },
+  };
 }
 
 /**
@@ -320,7 +352,7 @@ function acceptForwarded(
 
 /**
  * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It
- * resolves and never rejects: a failure goes to `onError`.
+ * resolves and never rejects: a failure, such as a `pageUrl` that is not a URL, goes to `onError`.
  */
 async function setUninstallUrl(
   pageUrl: string,
@@ -328,14 +360,37 @@ async function setUninstallUrl(
   onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
   try {
-    const url = new URL(pageUrl);
-    for (const [name, value] of Object.entries(params ?? {})) {
-      url.searchParams.set(name, String(value));
-    }
-    await chromeApi().runtime.setUninstallURL(url.toString());
+    // oxlint-disable-next-line no-new -- The constructor throws for a page that is not a URL. The page goes as written.
+    new URL(pageUrl);
+    await chromeApi().runtime.setUninstallURL(withQueryAdded(pageUrl, params));
   } catch (error) {
     reportTo(onError, error);
   }
+}
+
+/**
+ * Returns `pageUrl` with `params` added at the end of its query, before any fragment. The page's own query stays as
+ * written, since a page may read it in a form that `URLSearchParams` would write another way.
+ */
+function withQueryAdded(pageUrl: string, params: UninstallParams | undefined): string {
+  const query = new URLSearchParams(
+    Object.entries(params ?? {}).map(([name, value]) => [name, String(value)]),
+  ).toString();
+  if (query === "") {
+    return pageUrl;
+  }
+  const hashAt = pageUrl.indexOf("#");
+  const beforeFragment = hashAt === -1 ? pageUrl : pageUrl.slice(0, hashAt);
+  const fragment = hashAt === -1 ? "" : pageUrl.slice(hashAt);
+  return `${beforeFragment}${joinerAfter(beforeFragment)}${query}${fragment}`;
+}
+
+/** Returns what goes between `address` and an added query: `?`, `&`, or nothing after a `?` or `&` it ends in. */
+function joinerAfter(address: string): string {
+  if (!address.includes("?")) {
+    return "?";
+  }
+  return address.endsWith("?") || address.endsWith("&") ? "" : "&";
 }
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
@@ -386,8 +441,8 @@ function isChromeApi(value: unknown): value is ChromeApi {
 }
 
 /**
- * Checks a forwarded message against what the intake takes, as `track` does, and refuses the names in
- * `REFUSED_NAMES`. Content scripts run among the page's scripts, so the worker cannot trust what they send.
+ * Checks a forwarded message against what the worker takes, as `isForwardable` does. Content scripts run among the
+ * page's scripts, so the worker cannot trust what they send.
  */
 function isForwarded(message: unknown): message is { name: string; params?: EventParams } {
   if (
@@ -397,10 +452,15 @@ function isForwarded(message: unknown): message is { name: string; params?: Even
   ) {
     return false;
   }
-  const name: unknown = Reflect.get(message, "name");
+  return isForwardable(Reflect.get(message, "name"), Reflect.get(message, "params"));
+}
+
+/**
+ * Tells whether the worker takes a forwarded event: one `track` takes, with a name outside `REFUSED_NAMES`, the
+ * intake's system events.
+ */
+function isForwardable(name: unknown, params: unknown): boolean {
   return (
-    typeof name === "string" &&
-    !REFUSED_NAMES.has(name) &&
-    checkEvent(name, Reflect.get(message, "params")) === undefined
+    typeof name === "string" && !REFUSED_NAMES.has(name) && checkEvent(name, params) === undefined
   );
 }

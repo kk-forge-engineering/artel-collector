@@ -1,4 +1,4 @@
-import { daysBetween, formatDay, localDateAt } from "./calendar.js";
+import { daysBetween, formatDay, localDateAt, Period } from "./calendar.js";
 import { LifecycleEvent, UNINSTALLED, type EventParams, type UsageEvent } from "./envelope.js";
 import {
   activeDaysBucket,
@@ -34,7 +34,8 @@ import {
   isAnalyticsState,
   type StateFields,
 } from "./stateFields.js";
-import { newHttpTransport, type Transport } from "./transport.js";
+import { newThrottle } from "./throttle.js";
+import { transportsOf } from "./transport.js";
 
 const SESSION_IDLE_MINUTES = 10;
 const SEND_DELAY_SECONDS = 5;
@@ -46,6 +47,14 @@ const SEND_DELAY_SECONDS = 5;
  */
 export function newCollector<M extends Mode>(options: CollectorOptions & { mode: M }): Collector<M>;
 export function newCollector(options: CollectorOptions): Collector {
+  return newCollectorNotingDays(options, () => undefined);
+}
+
+/**
+ * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first
+ * event of a local day. That event adds the day to the active days.
+ */
+export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () => void): Collector {
   const product = checkedBuild(options);
   const { mode } = options;
   const transports = transportsOf(options);
@@ -93,24 +102,34 @@ export function newCollector(options: CollectorOptions): Collector {
     : undefined;
   const pageOf = (name: string): PageRead | undefined => pages?.read(name);
 
+  const throttle = newThrottle();
+
   // The install day is the local date of the first call of any method, so it waits on no particular event.
   let isInstallDayKnown = false;
 
+  /**
+   * Stores the install day, settles the stored state and schedules the first send, once per collector. The caller
+   * holds the lock.
+   */
+  async function startOnce(): Promise<void> {
+    if (isInstallDayKnown) {
+      return;
+    }
+    await install.installDayOr(localDateAt(clock.now()));
+    await settleStoredState();
+    isInstallDayKnown = true;
+    // The first send carries what an earlier run of the host left queued. A run stopped mid-send holds a lease, and its
+    // events go with the first send after the lease runs out.
+    outbox.sendSoon();
+  }
+
   function serialize<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
-    const withInstallDay = async (): Promise<T> => {
-      if (!isInstallDayKnown) {
-        await install.installDayOr(localDateAt(clock.now()));
-        await settleStoredState();
-        isInstallDayKnown = true;
-        // The first send carries what an earlier run of the host left queued. A run stopped mid-send holds a lease, and
-        // its events go with the first send after the lease runs out.
-        outbox.sendSoon();
-      }
-      return operation();
-    };
     // Each operation reads and writes several storage keys. The lock keeps two events from both taking the same
     // first-of-day mark.
-    return lock(withInstallDay).catch((error: unknown) => {
+    return lock(async () => {
+      await startOnce();
+      return operation();
+    }).catch((error: unknown) => {
       reportError(error);
       return fallback;
     });
@@ -266,8 +285,10 @@ export function newCollector(options: CollectorOptions): Collector {
     }
     let event: UsageEvent | undefined;
     let dropped: QueuedEnvelope[];
+    let isNewDay = false;
     try {
       const stamp = await install.stamp(clock.now());
+      isNewDay = stamp.first.includes(Period.Day);
       event = newEvent({
         name,
         // The `uninstalled` age gets the precision of the envelope's ages, so a state that sends no exact age does not
@@ -302,6 +323,9 @@ export function newCollector(options: CollectorOptions): Collector {
       throw error;
     }
     view?.recorded();
+    if (isNewDay) {
+      onNewDay();
+    }
     // The queue holds the event by now, so a failure here keeps its marks.
     await giveBack(dropped);
     return true;
@@ -328,14 +352,39 @@ export function newCollector(options: CollectorOptions): Collector {
     await outbox.send();
   }
 
+  /**
+   * Schedules a send at construction when the storage holds requests, such as the events of a page or a window that
+   * closed before its send. It runs `startOnce`, which settles the stored state before it schedules the send.
+   */
+  async function sendWhatIsLeft(): Promise<void> {
+    await lock(async () => {
+      // A storage that fails here fails the next call too, and that call reports it once.
+      if (await outbox.holdsRequests().catch(() => false)) {
+        await startOnce();
+      }
+    }).catch(reportError);
+  }
+
   const collector: Collector = {
-    track: async (name, given) => {
-      const event = acceptedEvent(name, given, reportError);
+    track: async (name, given, trackOptions) => {
+      const calledAt = clock.now();
+      const event = acceptedEvent({ name, given, options: trackOptions, reportError });
       if (event === undefined) {
         return;
       }
       const page = pageOf(name);
-      await serialize(async () => record({ name, params: event.params, page }), false);
+      await serialize(async () => {
+        // The check and the mark run in the lock, so of two calls in quick turn only the first goes.
+        const call = { name, throttleMs: event.throttleMs, now: calledAt };
+        if (throttle.isDropped(call)) {
+          return false;
+        }
+        const isRecorded = await record({ name, params: event.params, page });
+        if (isRecorded) {
+          throttle.went(call);
+        }
+        return isRecorded;
+      }, false);
     },
 
     // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.
@@ -424,24 +473,8 @@ export function newCollector(options: CollectorOptions): Collector {
         };
       }, undefined),
   };
+  void sendWhatIsLeft();
   return collector;
-}
-
-/**
- * Returns the transport of the envelopes and that of the forget requests. The intake's forget address replaces the last
- * segment of the relay path, `/v1/public/relay`. A product's own transport takes both kinds of request.
- */
-function transportsOf(options: CollectorOptions): {
-  transport: Transport;
-  forgetTransport: Transport;
-} {
-  if (options.transport !== undefined) {
-    return { transport: options.transport, forgetTransport: options.transport };
-  }
-  return {
-    transport: newHttpTransport(options.endpoint),
-    forgetTransport: newHttpTransport(new URL("forget", options.endpoint).href),
-  };
 }
 
 /** Returns the longest an event waits in the queue before a send starts, as the options set it. */

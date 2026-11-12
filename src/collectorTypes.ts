@@ -170,15 +170,25 @@ export interface UninstallParams extends ProductFields {
   active_days: ActiveDaysBucket;
 }
 
+export interface TrackOptions {
+  /**
+   * Drops this call while a call of the same name with `throttleMs` went less than this many milliseconds before, as
+   * for a held key that repeats. The first call of a series goes. A call without `throttleMs` opens no window. The
+   * collector keeps the time in memory, so each collector keeps its own.
+   */
+  throttleMs?: number | undefined;
+}
+
 /** Every method resolves and never rejects. A failure goes only to `onError`. */
 export interface Collector<M extends Mode = Mode> {
   /**
    * Queues the event for the current state. Refuses and reports an event the intake would drop for its form or a system
    * event's params, and `installed`, `updated` and `opted_out`, which only the collector's own methods send. The intake
    * drops an event whose string param looks like an address, and the product's allowlist, which the collector does not
-   * know, decides the rest. `onError` hears of neither drop.
+   * know, decides the rest. `onError` hears of neither drop, nor of a call that `throttleMs` drops. A `throttleMs` that
+   * is no finite number from 0 refuses the event and reports it to `onError`.
    */
-  track(name: string, params?: EventParams): Promise<void>;
+  track(name: string, params?: EventParams, options?: TrackOptions): Promise<void>;
   /** Sends `installed` once per install. In the opted_out state it sends nothing and marks nothing. */
   installed(): Promise<void>;
   /**

@@ -72,4 +72,28 @@ describe("checkEvent", () => {
   ])("returns the problem of %s, as track finds it", (name, params, problem) => {
     expect(checkEvent(name, params)).toBe(problem);
   });
+
+  it.each([
+    [
+      "a getter that throws",
+      {
+        get boom(): string {
+          throw new Error("getter");
+        },
+      },
+    ],
+    [
+      "a proxy whose keys throw",
+      new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error("keys");
+          },
+        },
+      ),
+    ],
+  ])("returns that params with %s could not be read, and never throws", (_case, params) => {
+    expect(checkEvent("report_exported", params)).toBe("has params that could not be read");
+  });
 });

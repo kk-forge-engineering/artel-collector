@@ -102,6 +102,8 @@ interface Queue {
   /** Resolves to the ids of the stored forget requests, oldest first. */
   forgets(): Promise<string[]>;
   removeForget(id: string): Promise<void>;
+  /** Resolves to whether the storage holds an envelope or a forget request. Writes and reports nothing. */
+  holdsRequests(): Promise<boolean>;
 }
 
 /** Returns a queue in `storage`. The caller holds a lock around each call. */
@@ -302,6 +304,9 @@ export function newQueue({
     },
 
     forgets: readForgets,
+    holdsRequests: async () =>
+      (parseQueue(await storage.get(QUEUE_KEY))?.length ?? 0) > 0 ||
+      (await readForgets()).length > 0,
 
     removeForget: async (id) =>
       writeForgets((await readForgets()).filter((stored) => stored !== id)),

@@ -72,26 +72,46 @@ describe("leaving a state with an id", () => {
     expect(await harness.storage.get(LAST_ID_KEY)).toBe("");
   });
 
-  it("posts the forget to the forget address of the endpoint", async () => {
-    const fetch = new FakeFetch();
-    vi.stubGlobal("fetch", fetch.fetch);
-    const collector = newCollector({
-      key: KEY,
-      platform: Platform.Extension,
-      version: VERSION,
-      storage: newMemoryStorage(),
-      clock: new FakeClock("2026-10-29T10:00:00"),
-      endpoint: `${ENDPOINT}?region=eu`,
-      mode: Mode.Pseudonymous,
-    });
-    await collector.setState(AnalyticsState.Pseudonymous);
-    await collector.track("a");
-    await collector.flush();
+  it.each([
+    ["as given", ENDPOINT, FORGET_URL],
+    ["with a trailing slash", `${ENDPOINT}/`, FORGET_URL],
+    [
+      "with a query, which it keeps as the envelopes do",
+      `${ENDPOINT}?region=eu`,
+      `${FORGET_URL}?region=eu`,
+    ],
+    ["with a trailing slash and a query", `${ENDPOINT}/?region=eu`, `${FORGET_URL}?region=eu`],
+    ["with several trailing slashes", `${ENDPOINT}///`, FORGET_URL],
+    [
+      "under a long path",
+      `https://intake.example.com/${"a/".repeat(500)}v1/public/relay`,
+      `https://intake.example.com/${"a/".repeat(500)}v1/public/forget`,
+    ],
+    ["at the root", "https://intake.example.com/", "https://intake.example.com/forget"],
+  ])(
+    "posts the forget to the forget address of the endpoint %s",
+    async (_case, endpoint, forgetUrl) => {
+      const fetch = new FakeFetch();
+      vi.stubGlobal("fetch", fetch.fetch);
+      const collector = newCollector({
+        key: KEY,
+        platform: Platform.Extension,
+        version: VERSION,
+        storage: newMemoryStorage(),
+        clock: new FakeClock("2026-10-29T10:00:00"),
+        endpoint,
+        mode: Mode.Pseudonymous,
+      });
+      await collector.setState(AnalyticsState.Pseudonymous);
+      await collector.track("a");
+      await collector.flush();
 
-    await collector.setState(AnalyticsState.Anonymous);
+      await collector.setState(AnalyticsState.Anonymous);
 
-    expect(fetch.forgets.map((forget) => forget.url)).toEqual([FORGET_URL]);
-  });
+      expect(fetch.requests.map((request) => request.url)).toEqual([endpoint]);
+      expect(fetch.forgets.map((forget) => forget.url)).toEqual([forgetUrl]);
+    },
+  );
 });
 
 describe("forget(id)", () => {

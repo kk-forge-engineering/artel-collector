@@ -189,7 +189,9 @@ describe("reading the params", () => {
     await harness.settle();
 
     expect(harness.fetch.requests).toEqual([]);
-    expect(harness.errors).toEqual([new Error("getter")]);
+    expect(harness.errors.map((error) => String(error))).toEqual([
+      'Error: artel: event "a" has params that could not be read, so it was not tracked',
+    ]);
   });
 });
 

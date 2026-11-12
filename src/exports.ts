@@ -13,6 +13,7 @@ export {
   type PageFields,
   type PageOptions,
   type StateOf,
+  type TrackOptions,
   type UninstallParams,
 } from "./collectorTypes.js";
 export { Platform, type EventParams } from "./envelope.js";

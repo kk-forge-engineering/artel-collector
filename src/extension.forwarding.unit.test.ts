@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { forwardTrack, newContentScriptCollector } from "./extension.js";
 import { newExtensionHarness, stubChrome, type ExtensionHarness } from "../tests/fakeChrome.js";
+import { FakeClock } from "../tests/fakeClock.js";
 
 const FROM_OTHER_EXTENSION = { id: "abcdefghijklmnopabcdefghijklmnop" };
 
@@ -223,6 +224,61 @@ describe("newContentScriptCollector", () => {
       [],
       0,
     ]);
+  });
+
+  it("forwards the first of a series inside throttleMs, in its own memory, and again after the window", async () => {
+    const { chrome, harness } = startForwarding();
+    const forwarded: unknown[] = [];
+    const sendMessage = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async (message, sender) => {
+      forwarded.push(message);
+      return sendMessage(message, sender);
+    };
+    const clock = new FakeClock("2026-10-29T10:00:00");
+    const collector = newContentScriptCollector({ clock });
+
+    for (const step of [0, 100, 399, 1, 100]) {
+      await clock.advance(step);
+      await collector.track("undo_pressed", undefined, { throttleMs: 400 });
+    }
+    await collector.track("redo_pressed", undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(forwarded).toHaveLength(3);
+    expect(harness.fetch.eventNames).toEqual(["undo_pressed", "undo_pressed", "redo_pressed"]);
+  });
+
+  it("forwards nothing for a throttleMs that is no finite number from 0, and opens no window", async () => {
+    const { harness } = startForwarding();
+    const collector = newContentScriptCollector();
+
+    await collector.track("undo_pressed", undefined, { throttleMs: -1 });
+    await collector.track("undo_pressed", undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(["undo_pressed"]);
+  });
+
+  it("forwards a call without throttleMs whatever the window, and opens none for it", async () => {
+    const { harness } = startForwarding();
+    const collector = newContentScriptCollector();
+
+    await collector.track("undo_pressed");
+    await collector.track("undo_pressed", undefined, { throttleMs: 400 });
+    await collector.track("undo_pressed");
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(["undo_pressed", "undo_pressed", "undo_pressed"]);
+  });
+
+  it("opens no window of the worker's collector for a forwarded event", async () => {
+    const { chrome, harness } = startForwarding();
+
+    await chrome.runtime.sendMessage({ type: "artel.track", name: "undo_pressed" });
+    await harness.collector.track("undo_pressed", undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(["undo_pressed", "undo_pressed"]);
   });
 
   it("throws nothing outside an extension or with no worker", async () => {

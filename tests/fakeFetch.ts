@@ -43,8 +43,8 @@ export interface RecordedForget {
   id: unknown;
 }
 
-/** The path of the intake's forget address. Every other request carries an envelope. */
-const FORGET_PATH = "/v1/public/forget";
+/** The last segment of the intake's forget address, under any path. Every other request carries an envelope. */
+const FORGET_SEGMENT = "/forget";
 
 /**
  * A fake `fetch` that records every request, the envelopes in `requests` and the forget requests in `forgets`. It
@@ -82,7 +82,7 @@ export class FakeFetch {
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (new URL(url).pathname === FORGET_PATH) {
+    if (new URL(url).pathname.endsWith(FORGET_SEGMENT)) {
       this.forgets.push({ url, ...parseForget(init?.body) });
     } else {
       this.requests.push({
