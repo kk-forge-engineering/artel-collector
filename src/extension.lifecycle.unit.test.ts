@@ -146,6 +146,25 @@ describe('uninstallPage', () => {
     });
   });
 
+  it.each([
+    ['without a query', 'https://example.com/uninstall', '?', ''],
+    ['with a query of its own', 'https://example.com/uninstall?b=2&a=1&flag&q=a%20b+c&version=x', '&', ''],
+    ['with an empty query', 'https://example.com/uninstall?', '', ''],
+    ['with a query that ends in &', 'https://example.com/uninstall?a=1&', '', ''],
+    ['with a fragment', 'https://example.com/uninstall', '?', '#top'],
+    ['with a query and a fragment that holds ?', 'https://example.com/uninstall?a=1', '&', '#top?x=1'],
+  ])(
+    'adds the parameters to a page %s and leaves the page as it was',
+    async (_case, beforeFragment, joiner, fragment) => {
+      const { chrome } = newExtensionHarness({ isWorker: true, uninstallPage: `${beforeFragment}${fragment}` });
+
+      await expect.poll(() => chrome.uninstallUrl).not.toBe('');
+      expect(chrome.uninstallUrl).toBe(
+        `${beforeFragment}${joiner}platform=extension&version=3.1.0&browser_language=pt&age_days=0&active_days=0${fragment}`,
+      );
+    },
+  );
+
   it('sets it again after each setState, to the page alone in the opted_out state', async () => {
     const { chrome, collector } = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
 

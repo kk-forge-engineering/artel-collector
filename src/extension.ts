@@ -12,7 +12,7 @@ import {
 } from './collectorTypes.js';
 import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
 import { checkEvent } from './eventCheck.js';
-import { reportTo } from './hostInput.js';
+import { quoted, reportTo } from './hostInput.js';
 import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
 import type { StorageAdapter } from './storage.js';
 import { newWebLock } from './web.js';
@@ -299,22 +299,47 @@ function acceptForwarded(collector: Collector, clock: Clock, onError: ((error: E
 
 /**
  * Sets the uninstall page to `pageUrl` with `params` added to its query, or to `pageUrl` alone without them. It
- * resolves and never rejects: a failure goes to `onError`.
+ * resolves and never rejects: a failure, such as a `pageUrl` that is not a URL, goes to `onError`.
  */
 async function setUninstallUrl(
   pageUrl: string,
   params: UninstallParams | undefined,
   onError: ((error: Error) => void) | undefined,
 ): Promise<void> {
+  if (!URL.canParse(pageUrl)) {
+    reportTo(onError, new TypeError(`artel: uninstallPage is not a URL: ${quoted(pageUrl)}`));
+    return;
+  }
   try {
-    const url = new URL(pageUrl);
-    for (const [name, value] of Object.entries(params ?? {})) {
-      url.searchParams.set(name, String(value));
-    }
-    await chromeApi().runtime.setUninstallURL(url.toString());
+    await chromeApi().runtime.setUninstallURL(withQueryAdded(pageUrl, params));
   } catch (error) {
     reportTo(onError, error);
   }
+}
+
+/**
+ * Returns `pageUrl` with `params` added at the end of its query, before any fragment. The page's own query stays as
+ * written, since a page may read it in a form that `URLSearchParams` would write another way.
+ */
+function withQueryAdded(pageUrl: string, params: UninstallParams | undefined): string {
+  const query = new URLSearchParams(
+    Object.entries(params ?? {}).map(([name, value]) => [name, String(value)]),
+  ).toString();
+  if (query === '') {
+    return pageUrl;
+  }
+  const hashAt = pageUrl.indexOf('#');
+  const beforeFragment = hashAt === -1 ? pageUrl : pageUrl.slice(0, hashAt);
+  const fragment = hashAt === -1 ? '' : pageUrl.slice(hashAt);
+  return `${beforeFragment}${joinerAfter(beforeFragment)}${query}${fragment}`;
+}
+
+/** Returns what goes between `address` and an added query: `?`, `&`, or nothing after a `?` or `&` it ends in. */
+function joinerAfter(address: string): string {
+  if (!address.includes('?')) {
+    return '?';
+  }
+  return address.endsWith('?') || address.endsWith('&') ? '' : '&';
 }
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
