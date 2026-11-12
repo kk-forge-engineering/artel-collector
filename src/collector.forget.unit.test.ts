@@ -69,6 +69,13 @@ describe('leaving a state with an id', () => {
     ['with a trailing slash', `${ENDPOINT}/`, FORGET_URL],
     ['with a query, which it keeps as the envelopes do', `${ENDPOINT}?region=eu`, `${FORGET_URL}?region=eu`],
     ['with a trailing slash and a query', `${ENDPOINT}/?region=eu`, `${FORGET_URL}?region=eu`],
+    ['with several trailing slashes', `${ENDPOINT}///`, FORGET_URL],
+    [
+      'under a long path',
+      `https://intake.example.com/${'a/'.repeat(500)}v1/public/relay`,
+      `https://intake.example.com/${'a/'.repeat(500)}v1/public/forget`,
+    ],
+    ['at the root', 'https://intake.example.com/', 'https://intake.example.com/forget'],
   ])('posts the forget to the forget address of the endpoint %s', async (_case, endpoint, forgetUrl) => {
     const fetch = new FakeFetch();
     vi.stubGlobal('fetch', fetch.fetch);

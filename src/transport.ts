@@ -77,6 +77,11 @@ export function transportsOf(options: CollectorOptions): { transport: Transport;
  */
 function forgetUrlOf(endpoint: string): string {
   const url = new URL(endpoint);
-  url.pathname = url.pathname.replace(/[^/]*\/*$/, 'forget');
+  const path = url.pathname;
+  let end = path.length;
+  while (end > 0 && path[end - 1] === '/') {
+    end--;
+  }
+  url.pathname = `${path.slice(0, path.lastIndexOf('/', end - 1) + 1)}forget`;
   return url.href;
 }
