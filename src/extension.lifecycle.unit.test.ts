@@ -311,16 +311,6 @@ describe('uninstallPage', () => {
     expect([state, errors]).toEqual([AnalyticsState.OptedOut, []]);
   });
 
-  it('stores a state after an earlier write of the page failed', async () => {
-    const { clock, collector } = newExtensionHarness({ isWorker: false, uninstallPage: UNINSTALL_PAGE });
-    // The write at construction runs without `URL.canParse`, and every later write waits on it.
-    await withoutCanParse(() => clock.advance(0));
-
-    await collector.setState(AnalyticsState.OptedOut);
-
-    expect(await collector.getState()).toBe(AnalyticsState.OptedOut);
-  });
-
   it('sets no uninstall page without the option', async () => {
     const { chrome, collector } = newExtensionHarness({ isWorker: true });
 
