@@ -172,16 +172,6 @@ describe('reading the params', () => {
       ),
       'could not be read',
     ],
-    ['a Map', fromUntypedHost<EventParams>(new Map([['format', 'pdf']])), 'are not a plain object'],
-    [
-      'an instance of a class',
-      fromUntypedHost<EventParams>(
-        new (class Params {
-          format = 'pdf';
-        })(),
-      ),
-      'are not a plain object',
-    ],
   ])('resolves and reports params with %s, and records nothing', async (_, params, problem) => {
     const harness = newHarness();
 

@@ -83,16 +83,6 @@ describe('checkEvent', () => {
       ),
       'has params that could not be read',
     ],
-    ['a Map', new Map([['format', 'pdf']]), 'has params that are not a plain object'],
-    ['a Date', new Date(0), 'has params that are not a plain object'],
-    [
-      'an instance of a class',
-      new (class Params {
-        format = 'pdf';
-      })(),
-      'has params that are not a plain object',
-    ],
-    ['an object without a prototype', Object.assign(Object.create(null), { format: 'pdf' }), undefined],
   ])('returns the problem of params that are %s, and never throws', (_case, params, problem) => {
     expect(checkEvent('report_exported', params)).toBe(problem);
   });

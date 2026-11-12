@@ -87,26 +87,16 @@ export function acceptedEvent(
 }
 
 /**
- * Returns a shallow copy of the own enumerable entries of plain object params, and other params as they are. The
- * collector checks and queues the copy, so a later change the host makes to its object reaches neither. Throws what a
- * getter or a proxy of the params throws.
+ * Returns a shallow copy of the own enumerable entries of object params, and other params as they are. The collector
+ * checks and queues the copy, so a later change the host makes to its object reaches neither. Throws what a getter or a
+ * proxy of the params throws.
  */
 function copyOfParams(params: EventParams | undefined): EventParams | undefined {
-  // An untyped host can pass null, a list or a Map. The function returns such params as they are, so the check refuses
-  // them.
-  return isPlainObject(params) ? Object.fromEntries(Object.entries(params)) : params;
-}
-
-/**
- * Tells whether `value` is an object of the `Object` constructor of any realm, or one without a prototype. Throws what a
- * proxy's `getPrototypeOf` throws.
- */
-function isPlainObject(value: unknown): value is object {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const prototype: unknown = Object.getPrototypeOf(value);
-  return prototype === null || Object.getPrototypeOf(prototype) === null;
+  // An untyped host can pass null or a list. The function returns such params as they are, so the check refuses them.
+  const value: unknown = params;
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : params;
 }
 
 /**
@@ -119,10 +109,6 @@ function paramsProblem(name: string, params: unknown): string | undefined {
   }
   if (typeof params !== 'object' || params === null || Array.isArray(params)) {
     return 'has params that are not an object';
-  }
-  // JSON would send a Map or a Date as other params than the host meant.
-  if (!isPlainObject(params)) {
-    return 'has params that are not a plain object';
   }
   // The check counts the keys before it reads any value. A content script can send params with many keys, and this
   // order keeps their cost low.
