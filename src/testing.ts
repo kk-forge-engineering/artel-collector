@@ -25,7 +25,7 @@ export type RecordingCollector<M extends Mode = Mode> = Collector<M> & {
  * real collector would send. Its user starts in the anonymous state. It refuses an event `track` refuses, a state above
  * the mode and an id `forget` refuses, with the same report to `onError`. It records `opted_out` at the opt-out, and
  * nothing in the opted_out state. It keeps one version: `installed` records once, and `updated` only while neither of
- * them recorded. It drops an event by `throttleMs` as `track` does, by `clock`. `uninstallParams` resolves to undefined.
+ * them recorded. It drops a call with `throttleMs` as `track` does, by `clock`. `uninstallParams` resolves to undefined.
  */
 export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
   mode?: M,
@@ -57,8 +57,12 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
     track: async (name, given, options) => {
       const now = clock.now();
       const event = acceptedEvent(name, given, options, reportError);
-      if (event !== undefined && !throttle.isDropped(name, event.throttleMs, now) && record(name, event.params)) {
-        throttle.went(name, now);
+      if (event === undefined) {
+        return;
+      }
+      const call = { name, throttleMs: event.throttleMs, now };
+      if (!throttle.isDropped(call) && record(name, event.params)) {
+        throttle.went(call);
       }
     },
     installed: async () => {

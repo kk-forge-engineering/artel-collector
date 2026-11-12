@@ -205,7 +205,10 @@ describe('newContentScriptCollector', () => {
     const { chrome, harness } = startForwarding();
     const forwarded: unknown[] = [];
     const sendMessage = chrome.runtime.sendMessage;
-    chrome.runtime.sendMessage = async (message, sender) => (forwarded.push(message), sendMessage(message, sender));
+    chrome.runtime.sendMessage = async (message, sender) => {
+      forwarded.push(message);
+      return sendMessage(message, sender);
+    };
     const clock = new FakeClock('2026-10-29T10:00:00');
     const collector = newContentScriptCollector({ clock });
 
@@ -229,6 +232,28 @@ describe('newContentScriptCollector', () => {
     await harness.settle();
 
     expect(harness.fetch.eventNames).toEqual(['undo_pressed']);
+  });
+
+  it('forwards a call without throttleMs whatever the window, and opens none for it', async () => {
+    const { harness } = startForwarding();
+    const collector = newContentScriptCollector();
+
+    await collector.track('undo_pressed');
+    await collector.track('undo_pressed', undefined, { throttleMs: 400 });
+    await collector.track('undo_pressed');
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(['undo_pressed', 'undo_pressed', 'undo_pressed']);
+  });
+
+  it("opens no window of the worker's collector for a forwarded event", async () => {
+    const { chrome, harness } = startForwarding();
+
+    await chrome.runtime.sendMessage({ type: 'artel.track', name: 'undo_pressed' });
+    await harness.collector.track('undo_pressed', undefined, { throttleMs: 400 });
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(['undo_pressed', 'undo_pressed']);
   });
 
   it('throws nothing outside an extension or with no worker', async () => {

@@ -270,8 +270,8 @@ export type ContentScriptCollector = Pick<Collector, 'track'>;
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
  * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
  * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
- * key, version or endpoint, and never throws. It applies `throttleMs` in its own memory, by `clock`, before it forwards
- * an event. It has no `onError`, so it drops an event with a bad `throttleMs` without a report.
+ * key, version or endpoint, and never throws. It applies the `throttleMs` of a call in its own memory, by `clock`,
+ * before it forwards the event. It has no `onError`, so it drops a call with a bad `throttleMs` without a report.
  */
 export function newContentScriptCollector({ clock = systemClock }: { clock?: Clock } = {}): ContentScriptCollector {
   const throttle = newThrottle();
@@ -279,12 +279,16 @@ export function newContentScriptCollector({ clock = systemClock }: { clock?: Clo
     track: async (name, params, options) => {
       const now = clock.now();
       const asked = throttleOf(options);
-      if (asked === undefined || throttle.isDropped(name, asked.throttleMs, now)) {
+      if (asked === undefined) {
+        return;
+      }
+      const call = { name, throttleMs: asked.throttleMs, now };
+      if (throttle.isDropped(call)) {
         return;
       }
       // The window opens for an event the worker takes. The worker alone knows the user's state.
-      if (isForwarded({ type: FORWARD_TYPE, name, params })) {
-        throttle.went(name, now);
+      if (isForwardable(name, params)) {
+        throttle.went(call);
       }
       await forwardTrack(name, params);
     },
@@ -412,17 +416,20 @@ function isChromeApi(value: unknown): value is ChromeApi {
 }
 
 /**
- * Checks a forwarded message against what the intake takes, as `track` does, and refuses the names in
- * `REFUSED_NAMES`. Content scripts run among the page's scripts, so the worker cannot trust what they send.
+ * Checks a forwarded message against what the worker takes, as `isForwardable` does. Content scripts run among the
+ * page's scripts, so the worker cannot trust what they send.
  */
 function isForwarded(message: unknown): message is { name: string; params?: EventParams } {
   if (typeof message !== 'object' || message === null || Reflect.get(message, 'type') !== FORWARD_TYPE) {
     return false;
   }
-  const name: unknown = Reflect.get(message, 'name');
-  return (
-    typeof name === 'string' &&
-    !REFUSED_NAMES.has(name) &&
-    checkEvent(name, Reflect.get(message, 'params')) === undefined
-  );
+  return isForwardable(Reflect.get(message, 'name'), Reflect.get(message, 'params'));
+}
+
+/**
+ * Tells whether the worker takes a forwarded event: one `track` takes, with a name outside `REFUSED_NAMES`, the
+ * intake's system events.
+ */
+function isForwardable(name: unknown, params: unknown): boolean {
+  return typeof name === 'string' && !REFUSED_NAMES.has(name) && checkEvent(name, params) === undefined;
 }

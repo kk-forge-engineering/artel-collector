@@ -47,6 +47,31 @@ describe('track with throttleMs', () => {
     expect(await sentNames(harness)).toEqual(['undo_pressed', 'redo_pressed']);
   });
 
+  it('drops one of three calls that overlap inside the window, and none with a throttleMs of 0', async () => {
+    const throttled = newHarness();
+    const unthrottled = newHarness();
+
+    await Promise.all(
+      [0, 1, 2].map(() => throttled.collector.track('slider_moved', undefined, { throttleMs: THROTTLE_MS })),
+    );
+    await Promise.all([0, 1, 2].map(() => unthrottled.collector.track('slider_moved', undefined, { throttleMs: 0 })));
+
+    expect([await sentNames(throttled), await sentNames(unthrottled)]).toEqual([
+      ['slider_moved'],
+      ['slider_moved', 'slider_moved', 'slider_moved'],
+    ]);
+  });
+
+  it('opens no window for a call without throttleMs, and drops no such call', async () => {
+    const harness = newHarness();
+
+    await harness.collector.track('slider_moved');
+    await harness.collector.track('slider_moved', undefined, { throttleMs: THROTTLE_MS });
+    await harness.collector.track('slider_moved');
+
+    expect(await sentNames(harness)).toEqual(['slider_moved', 'slider_moved', 'slider_moved']);
+  });
+
   it('opens no window for an event it refuses for its params', async () => {
     const harness = newHarness();
 

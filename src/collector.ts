@@ -338,12 +338,13 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
       const page = pageOf(name);
       await serialize(async () => {
         // The check and the mark run in the lock, so two calls in quick turn never both pass an open window.
-        if (throttle.isDropped(name, event.throttleMs, calledAt)) {
+        const call = { name, throttleMs: event.throttleMs, now: calledAt };
+        if (throttle.isDropped(call)) {
           return false;
         }
         const isRecorded = await record({ name, params: event.params, page });
         if (isRecorded) {
-          throttle.went(name, calledAt);
+          throttle.went(call);
         }
         return isRecorded;
       }, false);

@@ -99,6 +99,8 @@ describe('newRecordingCollector', () => {
     const calls = [
       [0, 'undo_pressed', 400],
       [100, 'undo_pressed', 400],
+      [0, 'undo_pressed', undefined],
+      [0, 'redo_pressed', undefined],
       [0, 'redo_pressed', 400],
       [0, 'redo_pressed', -1],
       [300, 'undo_pressed', 400],
@@ -112,7 +114,13 @@ describe('newRecordingCollector', () => {
     await real.collector.flush();
 
     expect(recording.events.map((event) => event.name)).toEqual(real.fetch.eventNames);
-    expect(recording.events.map((event) => event.name)).toEqual(['undo_pressed', 'redo_pressed', 'undo_pressed']);
+    expect(recording.events.map((event) => event.name)).toEqual([
+      'undo_pressed',
+      'undo_pressed',
+      'redo_pressed',
+      'redo_pressed',
+      'undo_pressed',
+    ]);
     expect(recordingErrors).toEqual(real.errors);
     expect(recordingErrors).toHaveLength(1);
   });

@@ -1,25 +1,37 @@
 import type { TrackOptions } from './collectorTypes.js';
 
 /**
- * Remembers in memory when each event name last went, for the `throttleMs` of `track`. The window is leading-edge: the
- * first event goes, and a later one of the name goes only once `throttleMs` passed since the last one that went.
+ * Remembers in memory when each event name last went from a call with `throttleMs`. The window is leading-edge: the
+ * first such call goes, and a later one of the name goes only once its `throttleMs` passed since the last one that
+ * went. A call without `throttleMs` opens no window and is never dropped.
  */
 export interface Throttle {
-  /** Tells whether an event of `name` called at `now` falls inside the window of the last one of the name that went. */
-  isDropped(name: string, throttleMs: number | undefined, now: number): boolean;
-  /** Stores that an event of `name` called at `now` went, which opens its window. */
-  went(name: string, now: number): void;
+  /** Tells whether a call of `name` at `now` with `throttleMs` falls inside the window of the name. */
+  isDropped(call: ThrottledCall): boolean;
+  /** Opens the window of `name` at `now` for a call with `throttleMs` that went. */
+  went(call: ThrottledCall): void;
+}
+
+/** One `track` call as the throttle reads it. */
+interface ThrottledCall {
+  name: string;
+  throttleMs: number | undefined;
+  now: number;
 }
 
 export function newThrottle(): Throttle {
   const lastWent = new Map<string, number>();
   return {
-    isDropped: (name, throttleMs, now) => {
+    isDropped: ({ name, throttleMs, now }) => {
       const last = lastWent.get(name);
       // A clock set back counts by how far it moved, so the window never stays open until the clock catches up.
       return throttleMs !== undefined && last !== undefined && Math.abs(now - last) < throttleMs;
     },
-    went: (name, now) => void lastWent.set(name, now),
+    went: ({ name, throttleMs, now }) => {
+      if (throttleMs !== undefined) {
+        lastWent.set(name, now);
+      }
+    },
   };
 }
 

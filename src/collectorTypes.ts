@@ -165,11 +165,11 @@ export interface UninstallParams extends ProductFields {
   active_days: ActiveDaysBucket;
 }
 
-/** The options of one `track` call. */
 export interface TrackOptions {
   /**
-   * Drops this event while one of the same name went less than this many milliseconds before, as for a held key that
-   * repeats. The first event of a series goes. The collector keeps the time in memory, so each collector keeps its own.
+   * Drops this call while a call of the same name with `throttleMs` went less than this many milliseconds before, as
+   * for a held key that repeats. The first call of a series goes. A call without `throttleMs` opens no window. The
+   * collector keeps the time in memory, so each collector keeps its own.
    */
   throttleMs?: number | undefined;
 }
