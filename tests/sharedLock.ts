@@ -1,4 +1,4 @@
-import type { Lock } from '../src/exports.js';
+import type { Lock } from "../src/exports.js";
 
 /**
  * Returns a lock that runs operations one at a time, in call order. A failed operation does not block the next one.

@@ -1,20 +1,22 @@
 /** The browsers the intake tells apart. Any other browser is `other`. */
 export const BrowserName = {
-  Chrome: 'chrome',
-  Edge: 'edge',
-  Opera: 'opera',
-  Yandex: 'yandex',
-  Brave: 'brave',
-  Firefox: 'firefox',
-  Safari: 'safari',
-  Other: 'other',
+  Chrome: "chrome",
+  Edge: "edge",
+  Opera: "opera",
+  Yandex: "yandex",
+  Brave: "brave",
+  Firefox: "firefox",
+  Safari: "safari",
+  Other: "other",
 } as const;
 export type BrowserName = (typeof BrowserName)[keyof typeof BrowserName];
 
 type VersionedBrowserName = Exclude<BrowserName, typeof BrowserName.Other>;
 
 /** The browser and its major version, when it is known. `other` carries no version. */
-export type Browser = { name: VersionedBrowserName; major?: number } | { name: typeof BrowserName.Other };
+export type Browser =
+  | { name: VersionedBrowserName; major?: number }
+  | { name: typeof BrowserName.Other };
 
 /** The part of `navigator` the detection reads. */
 export interface NavigatorFields {
@@ -27,11 +29,11 @@ export interface NavigatorFields {
  * own.
  */
 const BRANDS: readonly [string, VersionedBrowserName][] = [
-  ['Microsoft Edge', BrowserName.Edge],
-  ['Opera', BrowserName.Opera],
-  ['YaBrowser', BrowserName.Yandex],
-  ['Brave', BrowserName.Brave],
-  ['Google Chrome', BrowserName.Chrome],
+  ["Microsoft Edge", BrowserName.Edge],
+  ["Opera", BrowserName.Opera],
+  ["YaBrowser", BrowserName.Yandex],
+  ["Brave", BrowserName.Brave],
+  ["Google Chrome", BrowserName.Chrome],
 ];
 
 /**
@@ -58,11 +60,11 @@ export function detectBrowser(nav: NavigatorFields): Browser | undefined {
   }
   // This check names a Chromium browser with no brand of its own `other`, and skips its User-Agent string. Such a
   // browser copies Chrome's User-Agent string, so that string names no browser.
-  const chromiumBrands = new Set(['Chromium', ...BRANDS.map(([brand]) => brand)]);
+  const chromiumBrands = new Set(["Chromium", ...BRANDS.map(([brand]) => brand)]);
   if (nav.userAgentData?.brands?.some((entry) => chromiumBrands.has(entry.brand)) === true) {
     return { name: BrowserName.Other };
   }
-  if (nav.userAgent === undefined || nav.userAgent === '') {
+  if (nav.userAgent === undefined || nav.userAgent === "") {
     return undefined;
   }
   return fromUserAgent(nav.userAgent);
@@ -78,7 +80,11 @@ function fromUserAgent(userAgent: string): Browser {
   // The check names Safari only without a Chrome or Chromium token. A Chromium browser's User-Agent string carries
   // Safari's tokens too. One regular expression per token keeps a long User-Agent string free of backtracking.
   const version = /\bVersion\/(\d+)/.exec(userAgent)?.[1];
-  if (version !== undefined && /\bSafari\//.test(userAgent) && !/\b(?:Chrome|Chromium)\//.test(userAgent)) {
+  if (
+    version !== undefined &&
+    /\bSafari\//.test(userAgent) &&
+    !/\b(?:Chrome|Chromium)\//.test(userAgent)
+  ) {
     return withMajor(BrowserName.Safari, version);
   }
   return { name: BrowserName.Other };
@@ -89,12 +95,14 @@ function fromUserAgent(userAgent: string): Browser {
  * 1 to 999 left out. Returns undefined for a value that is not an object, which only a host outside TypeScript passes.
  */
 export function copyBrowser(value: unknown): Browser | undefined {
-  if (typeof value !== 'object' || value === null) {
+  if (typeof value !== "object" || value === null) {
     return undefined;
   }
-  const name: unknown = Reflect.get(value, 'name');
-  const major: unknown = Reflect.get(value, 'major');
-  const known = Object.values(BrowserName).find((candidate) => candidate === name && candidate !== BrowserName.Other);
+  const name: unknown = Reflect.get(value, "name");
+  const major: unknown = Reflect.get(value, "major");
+  const known = Object.values(BrowserName).find(
+    (candidate) => candidate === name && candidate !== BrowserName.Other,
+  );
   if (known === undefined) {
     return { name: BrowserName.Other };
   }
@@ -109,11 +117,11 @@ function withMajor(name: VersionedBrowserName, version: string | undefined): Bro
 
 /** Returns the major version, or undefined when the string has none from 1 to 999, the range the intake takes. */
 function majorOf(version: string | undefined): number | undefined {
-  const major = Number.parseInt(version ?? '', 10);
+  const major = Number.parseInt(version ?? "", 10);
   return isMajor(major) ? major : undefined;
 }
 
 /** Checks for a whole number from 1 to 999, the range the intake takes. */
 function isMajor(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 999;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 999;
 }

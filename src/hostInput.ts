@@ -1,16 +1,16 @@
-import { copyBrowser, type Browser } from './browser.js';
-import type { CollectorOptions, Delivery, GetId } from './collectorTypes.js';
-import { Platform } from './envelope.js';
-import { isVersion } from './fields.js';
-import type { Build } from './stateFields.js';
-import type { StorageAdapter } from './storage.js';
+import { copyBrowser, type Browser } from "./browser.js";
+import type { CollectorOptions, Delivery, GetId } from "./collectorTypes.js";
+import { Platform } from "./envelope.js";
+import { isVersion } from "./fields.js";
+import type { Build } from "./stateFields.js";
+import type { StorageAdapter } from "./storage.js";
 
 type ReportError = (error: unknown) => void;
 
 /** The most characters an id may have for the intake to take it. */
 const MAX_ID_LENGTH = 64;
 /** The hosts an http endpoint may name: this machine, as `URL` writes its hostname. */
-const DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const DEVELOPMENT_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** The most characters of host or stored text a report quotes. A planted value can be megabytes long. */
 const MAX_QUOTED_LENGTH = 64;
@@ -20,9 +20,9 @@ const MAX_QUOTED_LENGTH = 64;
  * key, then 10 characters of `[0-9a-z]`. The intake refuses an envelope of a platform its channel's kind does not take.
  */
 const CHANNEL_KINDS = [
-  { kind: 'extension', platforms: [Platform.Extension] },
-  { kind: 'desktop', platforms: [Platform.MacOs, Platform.Windows, Platform.Linux] },
-  { kind: 'site', platforms: [Platform.Web] },
+  { kind: "extension", platforms: [Platform.Extension] },
+  { kind: "desktop", platforms: [Platform.MacOs, Platform.Windows, Platform.Linux] },
+  { kind: "site", platforms: [Platform.Web] },
 ].map(({ kind, platforms }) => ({
   kind,
   keyFormat: new RegExp(String.raw`^${kind}-(?:test-)?[\da-z]{10}$`),
@@ -42,7 +42,9 @@ export function quoted(value: unknown): string {
     return typeof value;
   }
   const characters = Array.from(text.slice(0, 2 * MAX_QUOTED_LENGTH));
-  return characters.length > MAX_QUOTED_LENGTH ? `${characters.slice(0, MAX_QUOTED_LENGTH).join('')}…` : text;
+  return characters.length > MAX_QUOTED_LENGTH
+    ? `${characters.slice(0, MAX_QUOTED_LENGTH).join("")}…`
+    : text;
 }
 
 /** Hands `error` to the host's `onError` as an Error. A handler that throws reaches no caller. */
@@ -77,7 +79,11 @@ export function accepted(
 export function checkedBuild(options: CollectorOptions): Build {
   checkOptions(options);
   const { platform, version } = options;
-  if (options.browser !== undefined && platform !== Platform.Web && platform !== Platform.Extension) {
+  if (
+    options.browser !== undefined &&
+    platform !== Platform.Web &&
+    platform !== Platform.Extension
+  ) {
     throw new TypeError(`artel: platform ${platform} names no browser`);
   }
   return { platform, version };
@@ -87,7 +93,9 @@ export function checkedBuild(options: CollectorOptions): Build {
  * Throws the `TypeError` a constructor throws for a key, a version, a platform, an endpoint or a transport the intake
  * would refuse every envelope of, and returns otherwise. It reads no host API, so a product's build or test can call it.
  */
-export function checkOptions(options: Pick<CollectorOptions, 'key' | 'version' | 'platform'> & Delivery): void {
+export function checkOptions(
+  options: Pick<CollectorOptions, "key" | "version" | "platform"> & Delivery,
+): void {
   checkDelivery(options);
   const { platform, version } = options;
   if (!Object.values(Platform).includes(platform)) {
@@ -101,7 +109,9 @@ export function checkOptions(options: Pick<CollectorOptions, 'key' | 'version' |
 
 /** Tells whether `key` is a channel's test key, `<kind>-test-<10 characters>`. */
 export function isTestKey(key: string): boolean {
-  return CHANNEL_KINDS.some(({ kind, keyFormat }) => key.startsWith(`${kind}-test-`) && keyFormat.test(key));
+  return CHANNEL_KINDS.some(
+    ({ kind, keyFormat }) => key.startsWith(`${kind}-test-`) && keyFormat.test(key),
+  );
 }
 
 /**
@@ -112,35 +122,43 @@ export function isTestKey(key: string): boolean {
  */
 function checkDelivery({ endpoint, transport }: Delivery): void {
   if (transport !== undefined) {
-    if (typeof transport !== 'function') {
+    if (typeof transport !== "function") {
       throw new TypeError(`artel: transport is a ${typeof transport}, not a function`);
     }
     return;
   }
   let url: URL | undefined;
   try {
-    url = typeof endpoint === 'string' ? new URL(endpoint) : undefined;
+    url = typeof endpoint === "string" ? new URL(endpoint) : undefined;
   } catch {
     // The throw below covers an endpoint that is no URL.
   }
-  const isHttps = url?.protocol === 'https:' || (url?.protocol === 'http:' && isDevelopmentHost(url.hostname));
-  if (!isHttps || url?.username !== '' || url.password !== '') {
+  const isHttps =
+    url?.protocol === "https:" || (url?.protocol === "http:" && isDevelopmentHost(url.hostname));
+  if (!isHttps || url?.username !== "" || url.password !== "") {
     throw new TypeError(
-      'artel: endpoint is not an https URL without a user or password, or http to a development host',
+      "artel: endpoint is not an https URL without a user or password, or http to a development host",
     );
   }
 }
 
 /** Tells whether a URL's host is one only this machine or a development setup serves. */
 function isDevelopmentHost(hostname: string): boolean {
-  return DEVELOPMENT_HOSTS.has(hostname) || hostname.endsWith('.localhost') || hostname.endsWith('.test');
+  return (
+    DEVELOPMENT_HOSTS.has(hostname) || hostname.endsWith(".localhost") || hostname.endsWith(".test")
+  );
 }
 
 /** Throws unless `key` has the intake's form, and its channel kind takes `platform`. */
 function checkKey(key: unknown, platform: Platform): void {
-  const channel = typeof key === 'string' ? CHANNEL_KINDS.find(({ keyFormat }) => keyFormat.test(key)) : undefined;
+  const channel =
+    typeof key === "string"
+      ? CHANNEL_KINDS.find(({ keyFormat }) => keyFormat.test(key))
+      : undefined;
   if (channel === undefined) {
-    throw new TypeError(`artel: key ${quoted(key)} is not <kind>-<10 characters> or <kind>-test-<10 characters>`);
+    throw new TypeError(
+      `artel: key ${quoted(key)} is not <kind>-<10 characters> or <kind>-test-<10 characters>`,
+    );
   }
   if (!channel.platforms.includes(platform)) {
     throw new TypeError(`artel: a key of kind ${channel.kind} does not take platform ${platform}`);
@@ -156,7 +174,7 @@ export function newBrowserReader(
   browser: Browser | (() => Browser | undefined) | undefined,
   reportError: ReportError,
 ): () => Browser | undefined {
-  if (typeof browser !== 'function') {
+  if (typeof browser !== "function") {
     const copy = acceptedBrowser(browser, reportError);
     return () => copy;
   }
@@ -167,7 +185,10 @@ export function newBrowserReader(
   };
 }
 
-function callBrowser(browser: () => Browser | undefined, reportError: ReportError): Browser | undefined {
+function callBrowser(
+  browser: () => Browser | undefined,
+  reportError: ReportError,
+): Browser | undefined {
   try {
     return browser();
   } catch (error) {
@@ -177,7 +198,10 @@ function callBrowser(browser: () => Browser | undefined, reportError: ReportErro
 }
 
 /** Returns a copy of the browser as the intake keeps it, or reports and drops a value that is not a browser. */
-function acceptedBrowser(browser: Browser | undefined, reportError: ReportError): Browser | undefined {
+function acceptedBrowser(
+  browser: Browser | undefined,
+  reportError: ReportError,
+): Browser | undefined {
   if (browser === undefined) {
     return undefined;
   }
@@ -190,7 +214,7 @@ function acceptedBrowser(browser: Browser | undefined, reportError: ReportError)
 
 /** Tells whether `id` is an id the intake takes: a string of 1 to 64 characters. */
 export function isUsableId(id: unknown): id is string {
-  return typeof id === 'string' && id !== '' && Array.from(id).length <= MAX_ID_LENGTH;
+  return typeof id === "string" && id !== "" && Array.from(id).length <= MAX_ID_LENGTH;
 }
 
 /**
@@ -200,12 +224,14 @@ export function isUsableId(id: unknown): id is string {
 export function usableId(getId: GetId, reportError: ReportError): GetId {
   return async () => {
     const id: unknown = await getId();
-    if (typeof id !== 'string' || id === '') {
+    if (typeof id !== "string" || id === "") {
       return undefined;
     }
     // The intake refuses the whole envelope of an id past 64 characters. The event waits as for an unknown id instead.
     if (Array.from(id).length > MAX_ID_LENGTH) {
-      reportError(new Error(`artel: an id past ${MAX_ID_LENGTH} characters is not one the intake takes`));
+      reportError(
+        new Error(`artel: an id past ${MAX_ID_LENGTH} characters is not one the intake takes`),
+      );
       return undefined;
     }
     return id;
@@ -220,7 +246,7 @@ export function newStringStorage(storage: StorageAdapter): StorageAdapter {
   return {
     get: async (key) => {
       const value: unknown = await storage.get(key);
-      return typeof value === 'string' ? value : undefined;
+      return typeof value === "string" ? value : undefined;
     },
     set: (key, value) => storage.set(key, value),
   };

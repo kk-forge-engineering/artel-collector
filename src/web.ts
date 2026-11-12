@@ -1,5 +1,5 @@
-import { detectBrowser } from './browser.js';
-import { newCollector } from './collector.js';
+import { detectBrowser } from "./browser.js";
+import { newCollector } from "./collector.js";
 import {
   Mode,
   type Collector,
@@ -8,16 +8,16 @@ import {
   type ModeOptions,
   type PageFields,
   type PageOptions,
-} from './collectorTypes.js';
-import { PAGE_VIEW, Platform } from './envelope.js';
-import type { Lock } from './lock.js';
-import type { StorageAdapter } from './storage.js';
+} from "./collectorTypes.js";
+import { PAGE_VIEW, Platform } from "./envelope.js";
+import type { Lock } from "./lock.js";
+import type { StorageAdapter } from "./storage.js";
 
 /**
  * The options of `newWebCollector`: those of `newCollector` without `platform`, with `storage` optional. An option left
  * out or `undefined` takes its default.
  */
-export type WebCollectorOptions = Omit<CommonOptions, 'storage'> & {
+export type WebCollectorOptions = Omit<CommonOptions, "storage"> & {
   storage?: StorageAdapter | undefined;
 } & PageOptions &
   Delivery &
@@ -28,7 +28,9 @@ export type WebCollectorOptions = Omit<CommonOptions, 'storage'> & {
  * language from `navigator.language`, the page from `pageFields` and, in a state with an id, the browser from
  * `detectBrowser`. The site passes its own `uiLanguage`. A desktop window uses `newDesktopCollector`.
  */
-export function newWebCollector<M extends Mode>(options: WebCollectorOptions & { mode: M }): Collector<M>;
+export function newWebCollector<M extends Mode>(
+  options: WebCollectorOptions & { mode: M },
+): Collector<M>;
 export function newWebCollector(options: WebCollectorOptions): Collector {
   const defaults = {
     platform: Platform.Web,
@@ -39,7 +41,11 @@ export function newWebCollector(options: WebCollectorOptions): Collector {
   };
   return options.mode === Mode.Anonymous
     ? newCollector({ ...options, ...defaults })
-    : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+    : newCollector({
+        ...options,
+        ...defaults,
+        browser: options.browser ?? (() => detectBrowser(navigator)),
+      });
 }
 
 /**
@@ -62,8 +68,8 @@ export function newLocalStorageAdapter(): StorageAdapter {
 export function newWebLock(): Lock {
   return (operation) => {
     // A test DOM such as happy-dom sets `navigator.locks` to null, so the check asks for the method itself.
-    const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
-    return typeof locks?.request === 'function' ? locks.request('artel', operation) : operation();
+    const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+    return typeof locks?.request === "function" ? locks.request("artel", operation) : operation();
   };
 }
 
@@ -73,12 +79,17 @@ export function newWebLock(): Lock {
  * `getPage` that returns the route pattern instead.
  */
 export function pageFields(): PageFields {
-  return { page: `${location.protocol}//${location.host}${location.pathname}`, referrer: document.referrer };
+  return {
+    page: `${location.protocol}//${location.host}${location.pathname}`,
+    referrer: document.referrer,
+  };
 }
 
 /** Returns `pageFields`, or undefined in a Web Worker, which has no page. */
 function pageFieldsWherePageIs(): PageFields | undefined {
-  return typeof document === 'undefined' || typeof location === 'undefined' ? undefined : pageFields();
+  return typeof document === "undefined" || typeof location === "undefined"
+    ? undefined
+    : pageFields();
 }
 
 /**
@@ -95,24 +106,24 @@ export function trackPageViews(collector: Collector): () => void {
     lastPath = location.pathname;
     void collector.track(PAGE_VIEW);
   };
-  const unwrapPushState = callAfter('pushState', onNavigation);
-  const unwrapReplaceState = callAfter('replaceState', onNavigation);
-  window.addEventListener('popstate', onNavigation);
+  const unwrapPushState = callAfter("pushState", onNavigation);
+  const unwrapReplaceState = callAfter("replaceState", onNavigation);
+  window.addEventListener("popstate", onNavigation);
   const navigation = navigationApi();
-  navigation?.addEventListener('currententrychange', onNavigation);
+  navigation?.addEventListener("currententrychange", onNavigation);
   onNavigation();
   return () => {
     unwrapPushState();
     unwrapReplaceState();
-    window.removeEventListener('popstate', onNavigation);
-    navigation?.removeEventListener('currententrychange', onNavigation);
+    window.removeEventListener("popstate", onNavigation);
+    navigation?.removeEventListener("currententrychange", onNavigation);
   };
 }
 
 /** What `callAfter` keeps of one wrapper it installed. */
 interface Wrapping {
   /** The method the wrapper calls, which `history` held before it. */
-  found: History['pushState'];
+  found: History["pushState"];
   /** Whether `history` held `found` as its own property, rather than inheriting it from `History.prototype`. */
   wasOwn: boolean;
   /** Whether the wrapper still calls its listener. A stopped wrapper only passes the call on. */
@@ -127,9 +138,13 @@ const wrappings = new WeakMap<object, Wrapping>();
  * from the top down, so trackers that stop in any order leave `history` as they found it. A stopped wrapper under an
  * active one or under a product's own wrapper stays and passes calls on.
  */
-function callAfter(method: 'pushState' | 'replaceState', listener: () => void): () => void {
-  const wrapping: Wrapping = { found: history[method], wasOwn: Object.hasOwn(history, method), isActive: true };
-  const wrapper: History['pushState'] = function (this: History, ...args) {
+function callAfter(method: "pushState" | "replaceState", listener: () => void): () => void {
+  const wrapping: Wrapping = {
+    found: history[method],
+    wasOwn: Object.hasOwn(history, method),
+    isActive: true,
+  };
+  const wrapper: History["pushState"] = function (this: History, ...args) {
     wrapping.found.apply(this, args);
     if (wrapping.isActive) {
       listener();
@@ -139,7 +154,11 @@ function callAfter(method: 'pushState' | 'replaceState', listener: () => void): 
   history[method] = wrapper;
   return () => {
     wrapping.isActive = false;
-    for (let top = wrappings.get(history[method]); top?.isActive === false; top = wrappings.get(history[method])) {
+    for (
+      let top = wrappings.get(history[method]);
+      top?.isActive === false;
+      top = wrappings.get(history[method])
+    ) {
       if (top.wasOwn) {
         history[method] = top.found;
       } else {
@@ -151,6 +170,6 @@ function callAfter(method: 'pushState' | 'replaceState', listener: () => void): 
 
 /** Returns the Navigation API, or undefined where the browser lacks it. */
 function navigationApi(): EventTarget | undefined {
-  const navigation: unknown = Reflect.get(globalThis, 'navigation');
+  const navigation: unknown = Reflect.get(globalThis, "navigation");
   return navigation instanceof EventTarget ? navigation : undefined;
 }

@@ -1,9 +1,9 @@
-import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from './envelope.js';
-import type { StorageAdapter } from './storage.js';
+import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from "./envelope.js";
+import type { StorageAdapter } from "./storage.js";
 
-export const QUEUE_KEY = 'queue';
+export const QUEUE_KEY = "queue";
 /** Names the ids of the stored forget requests, a JSON list. */
-const FORGETS_KEY = 'forgets';
+const FORGETS_KEY = "forgets";
 const MAX_ENVELOPE_EVENTS = 100;
 /**
  * The largest request body, under 64 KiB with some margin. A keepalive request and the intake both refuse a larger
@@ -39,7 +39,7 @@ export interface QueuedEnvelope {
 export interface Identity {
   id: string;
   id_kind: IdKind;
-  browser?: Envelope['browser'];
+  browser?: Envelope["browser"];
 }
 
 /** Holds a sealed envelope and the body each send attempt carries. */
@@ -70,7 +70,7 @@ interface Queue {
    * events, and to what the queue dropped: the oldest envelope past 20.
    */
   add(
-    fields: Omit<Envelope, 'events'>,
+    fields: Omit<Envelope, "events">,
     event: UsageEvent,
     options?: { awaitsId?: boolean },
   ): Promise<{ isFull: boolean; dropped: QueuedEnvelope[] }>;
@@ -120,7 +120,7 @@ export function newQueue({
   async function read(): Promise<QueuedEnvelope[]> {
     const queued = parseQueue(await storage.get(QUEUE_KEY));
     if (queued === undefined) {
-      reportError(new Error('artel: the stored queue is not a JSON list, so it was dropped'));
+      reportError(new Error("artel: the stored queue is not a JSON list, so it was dropped"));
       await write([]);
       return [];
     }
@@ -136,12 +136,18 @@ export function newQueue({
    * and reports what it drops. Returns the kept envelopes, and the other dropped ones that no request carried, since an
    * `opted_out` carries no marks.
    */
-  function withinCaps(items: readonly QueuedEnvelope[]): { kept: QueuedEnvelope[]; dropped: QueuedEnvelope[] } {
+  function withinCaps(items: readonly QueuedEnvelope[]): {
+    kept: QueuedEnvelope[];
+    dropped: QueuedEnvelope[];
+  } {
     const optOuts = items.filter((item) => item.isOptOut === true);
     const others = items.filter((item) => item.isOptOut !== true);
     const droppedOptOuts = optOuts.slice(0, Math.max(0, optOuts.length - MAX_QUEUED_OPT_OUTS));
     const keptOptOuts = optOuts.length - droppedOptOuts.length;
-    const dropped = others.slice(0, Math.max(0, others.length - Math.max(0, MAX_QUEUED_ENVELOPES - keptOptOuts)));
+    const dropped = others.slice(
+      0,
+      Math.max(0, others.length - Math.max(0, MAX_QUEUED_ENVELOPES - keptOptOuts)),
+    );
     if (droppedOptOuts.length > 0) {
       reportError(
         new Error(
@@ -164,11 +170,13 @@ export function newQueue({
   async function readForgets(): Promise<string[]> {
     let bodies: unknown;
     try {
-      bodies = JSON.parse((await storage.get(FORGETS_KEY)) ?? '[]');
+      bodies = JSON.parse((await storage.get(FORGETS_KEY)) ?? "[]");
     } catch {
       return [];
     }
-    return Array.isArray(bodies) ? bodies.filter((body): body is string => typeof body === 'string') : [];
+    return Array.isArray(bodies)
+      ? bodies.filter((body): body is string => typeof body === "string")
+      : [];
   }
 
   async function writeForgets(ids: string[]): Promise<void> {
@@ -180,7 +188,9 @@ export function newQueue({
   }
 
   /** Drops the envelopes `isDropped` picks and resolves to them. Writes nothing when it picks none. */
-  async function removeWhere(isDropped: (item: QueuedEnvelope) => boolean): Promise<QueuedEnvelope[]> {
+  async function removeWhere(
+    isDropped: (item: QueuedEnvelope) => boolean,
+  ): Promise<QueuedEnvelope[]> {
     const items = await read();
     const dropped = items.filter(isDropped);
     if (dropped.length > 0) {
@@ -235,7 +245,11 @@ export function newQueue({
     seal: async (qid, terms, identity) => {
       const items = await read();
       const item = items.find((candidate) => candidate.qid === qid);
-      if (item === undefined || !isFree(item, terms) || (item.awaitsId === true && identity === undefined)) {
+      if (
+        item === undefined ||
+        !isFree(item, terms) ||
+        (item.awaitsId === true && identity === undefined)
+      ) {
         return undefined;
       }
       if (item.awaitsId === true && identity !== undefined) {
@@ -289,7 +303,8 @@ export function newQueue({
 
     forgets: readForgets,
 
-    removeForget: async (id) => writeForgets((await readForgets()).filter((stored) => stored !== id)),
+    removeForget: async (id) =>
+      writeForgets((await readForgets()).filter((stored) => stored !== id)),
   };
 }
 
@@ -300,7 +315,7 @@ export function newQueue({
 export function parseQueue(stored: string | undefined): QueuedEnvelope[] | undefined {
   let queued: unknown;
   try {
-    queued = JSON.parse(stored ?? '[]');
+    queued = JSON.parse(stored ?? "[]");
   } catch {
     // The caller reports a queue that is no list. The parser's message quotes the stored text, which may hold an id or
     // a page, so it goes nowhere.
@@ -319,10 +334,15 @@ function unsent(items: readonly QueuedEnvelope[]): QueuedEnvelope[] {
  */
 function isFree(item: QueuedEnvelope, { holder, now, until }: LeaseTerms): boolean {
   const { leasedUntil } = item;
-  return leasedUntil === undefined || item.leasedBy === holder || leasedUntil <= now || leasedUntil > until;
+  return (
+    leasedUntil === undefined ||
+    item.leasedBy === holder ||
+    leasedUntil <= now ||
+    leasedUntil > until
+  );
 }
 
-function sameFields(envelope: Envelope, fields: Omit<Envelope, 'events'>): boolean {
+function sameFields(envelope: Envelope, fields: Omit<Envelope, "events">): boolean {
   const { events: _, ...envelopeFields } = envelope;
   return JSON.stringify(envelopeFields) === JSON.stringify(fields);
 }
@@ -339,13 +359,21 @@ function fits(envelope: Envelope, event: UsageEvent): boolean {
 /** Returns `byteCount` random bytes, 8 by default, as lowercase hex. */
 export function newRandomId(byteCount = 8): string {
   const bytes = crypto.getRandomValues(new Uint8Array(byteCount));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function isQueuedEnvelope(value: unknown): value is QueuedEnvelope {
-  if (typeof value !== 'object' || value === null || typeof Reflect.get(value, 'qid') !== 'string') {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof Reflect.get(value, "qid") !== "string"
+  ) {
     return false;
   }
-  const envelope: unknown = Reflect.get(value, 'envelope');
-  return typeof envelope === 'object' && envelope !== null && Array.isArray(Reflect.get(envelope, 'events'));
+  const envelope: unknown = Reflect.get(value, "envelope");
+  return (
+    typeof envelope === "object" &&
+    envelope !== null &&
+    Array.isArray(Reflect.get(envelope, "events"))
+  );
 }

@@ -1,6 +1,13 @@
-import { daysBetween, formatDay, localDateAt } from './calendar.js';
-import { LifecycleEvent, UNINSTALLED, type EventParams, type UsageEvent } from './envelope.js';
-import { activeDaysBucket, ageInDays, isLanguage, languageTag, newEvent, uninstalledParams } from './fields.js';
+import { daysBetween, formatDay, localDateAt } from "./calendar.js";
+import { LifecycleEvent, UNINSTALLED, type EventParams, type UsageEvent } from "./envelope.js";
+import {
+  activeDaysBucket,
+  ageInDays,
+  isLanguage,
+  languageTag,
+  newEvent,
+  uninstalledParams,
+} from "./fields.js";
 import {
   accepted,
   checkedBuild,
@@ -10,18 +17,24 @@ import {
   quoted,
   reportTo,
   usableId,
-} from './hostInput.js';
-import { systemClock } from './clock.js';
-import { newChannelStorage } from './storage.js';
-import { AnalyticsState, Mode, type Collector, type CollectorOptions } from './collectorTypes.js';
-import { acceptedEvent } from './eventCheck.js';
-import { newInstallState } from './installState.js';
-import { exclusive } from './lock.js';
-import { newOutbox } from './outbox.js';
-import { newPageReader, type PageRead, type PageReader } from './page.js';
-import type { Identity, QueuedEnvelope } from './queue.js';
-import { carriesPage, channelTakes, fieldsForState, isAnalyticsState, type StateFields } from './stateFields.js';
-import { newHttpTransport, type Transport } from './transport.js';
+} from "./hostInput.js";
+import { systemClock } from "./clock.js";
+import { newChannelStorage } from "./storage.js";
+import { AnalyticsState, Mode, type Collector, type CollectorOptions } from "./collectorTypes.js";
+import { acceptedEvent } from "./eventCheck.js";
+import { newInstallState } from "./installState.js";
+import { exclusive } from "./lock.js";
+import { newOutbox } from "./outbox.js";
+import { newPageReader, type PageRead, type PageReader } from "./page.js";
+import type { Identity, QueuedEnvelope } from "./queue.js";
+import {
+  carriesPage,
+  channelTakes,
+  fieldsForState,
+  isAnalyticsState,
+  type StateFields,
+} from "./stateFields.js";
+import { newHttpTransport, type Transport } from "./transport.js";
 
 const SESSION_IDLE_MINUTES = 10;
 const SEND_DELAY_SECONDS = 5;
@@ -41,9 +54,20 @@ export function newCollector(options: CollectorOptions): Collector {
   const reportError = (error: unknown): void => reportTo(options.onError, error);
   const lock = exclusive(options.lock);
   const getId = options.mode === Mode.Identified ? usableId(options.getId, reportError) : undefined;
-  const readBrowser = options.mode === Mode.Anonymous ? undefined : newBrowserReader(options.browser, reportError);
-  const browserLanguage = accepted('browserLanguage', languageTag(options.browserLanguage), isLanguage, reportError);
-  const uiLanguage = accepted('uiLanguage', languageTag(options.uiLanguage), isLanguage, reportError);
+  const readBrowser =
+    options.mode === Mode.Anonymous ? undefined : newBrowserReader(options.browser, reportError);
+  const browserLanguage = accepted(
+    "browserLanguage",
+    languageTag(options.browserLanguage),
+    isLanguage,
+    reportError,
+  );
+  const uiLanguage = accepted(
+    "uiLanguage",
+    languageTag(options.uiLanguage),
+    isLanguage,
+    reportError,
+  );
   const install = newInstallState({
     storage,
     sessionIdleMs: durationOr(options.sessionIdleMinutes, SESSION_IDLE_MINUTES) * 60_000,
@@ -145,7 +169,7 @@ export function newCollector(options: CollectorOptions): Collector {
     // The install id goes before the last id. A run that stops between them then keeps the last id, and the next run
     // leaves it again.
     await install.dropInstallId();
-    await install.setLastId('');
+    await install.setLastId("");
   }
 
   /**
@@ -248,7 +272,8 @@ export function newCollector(options: CollectorOptions): Collector {
         name,
         // The `uninstalled` age gets the precision of the envelope's ages, so a state that sends no exact age does not
         // send one here.
-        params: name === UNINSTALLED ? uninstalledParams(params, { isExact: fields.isAgeExact }) : params,
+        params:
+          name === UNINSTALLED ? uninstalledParams(params, { isExact: fields.isAgeExact }) : params,
         stamp,
         page: fields.mayCarryPage ? view?.fields : undefined,
         isAgeExact: fields.isAgeExact,
@@ -269,7 +294,10 @@ export function newCollector(options: CollectorOptions): Collector {
       // A failure before the queue holds the event loses it. Its marks go back, so the next event takes them and the
       // day still counts. A failed stamp gave back its own first-of-period marks.
       await install.giveBack([
-        { version: productVersion, events: [event ?? { name, day: formatDay(localDateAt(clock.now())) }] },
+        {
+          version: productVersion,
+          events: [event ?? { name, day: formatDay(localDateAt(clock.now())) }],
+        },
       ]);
       throw error;
     }
@@ -313,20 +341,29 @@ export function newCollector(options: CollectorOptions): Collector {
     // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.
     installed: async () => {
       const page = pageOf(LifecycleEvent.Installed);
-      const takeMark = (productVersion: string): Promise<boolean> => install.takeInstall(productVersion);
-      await serialize(async () => record({ name: LifecycleEvent.Installed, page, takeMark }), false);
+      const takeMark = (productVersion: string): Promise<boolean> =>
+        install.takeInstall(productVersion);
+      await serialize(
+        async () => record({ name: LifecycleEvent.Installed, page, takeMark }),
+        false,
+      );
     },
 
     updated: async () => {
       const page = pageOf(LifecycleEvent.Updated);
-      const takeMark = (productVersion: string): Promise<boolean> => install.takeVersion(productVersion);
+      const takeMark = (productVersion: string): Promise<boolean> =>
+        install.takeVersion(productVersion);
       await serialize(async () => record({ name: LifecycleEvent.Updated, page, takeMark }), false);
     },
 
     setState: async (next) => {
       const hasRequest = await serialize(async () => {
         if (!takes(next)) {
-          reportError(new TypeError(`artel: a channel of mode ${quoted(mode)} takes no state ${quoted(next)}`));
+          reportError(
+            new TypeError(
+              `artel: a channel of mode ${quoted(mode)} takes no state ${quoted(next)}`,
+            ),
+          );
           return false;
         }
         const previous = await currentState();
@@ -356,7 +393,7 @@ export function newCollector(options: CollectorOptions): Collector {
     forget: async (id) => {
       // The intake refuses a forget of any other value, which no envelope carries as its id.
       if (!isUsableId(id)) {
-        reportError(new TypeError('artel: forget takes an id of 1 to 64 characters'));
+        reportError(new TypeError("artel: forget takes an id of 1 to 64 characters"));
         return;
       }
       await serialize(async () => {
@@ -394,22 +431,27 @@ export function newCollector(options: CollectorOptions): Collector {
  * Returns the transport of the envelopes and that of the forget requests. The intake's forget address replaces the last
  * segment of the relay path, `/v1/public/relay`. A product's own transport takes both kinds of request.
  */
-function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
+function transportsOf(options: CollectorOptions): {
+  transport: Transport;
+  forgetTransport: Transport;
+} {
   if (options.transport !== undefined) {
     return { transport: options.transport, forgetTransport: options.transport };
   }
   return {
     transport: newHttpTransport(options.endpoint),
-    forgetTransport: newHttpTransport(new URL('forget', options.endpoint).href),
+    forgetTransport: newHttpTransport(new URL("forget", options.endpoint).href),
   };
 }
 
 /** Returns the longest an event waits in the queue before a send starts, as the options set it. */
-export function sendDelayMsOf({ sendDelaySeconds }: Pick<CollectorOptions, 'sendDelaySeconds'>): number {
+export function sendDelayMsOf({
+  sendDelaySeconds,
+}: Pick<CollectorOptions, "sendDelaySeconds">): number {
   return durationOr(sendDelaySeconds, SEND_DELAY_SECONDS) * 1_000;
 }
 
 /** Returns `value`, or `fallback` for a duration that is no finite number from 0. */
 function durationOr(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 }

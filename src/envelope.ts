@@ -1,13 +1,13 @@
-import type { Browser } from './browser.js';
-import type { Period } from './calendar.js';
+import type { Browser } from "./browser.js";
+import type { Period } from "./calendar.js";
 
 /** The platform the product runs on, as the intake names it. */
 export const Platform = {
-  Extension: 'extension',
-  MacOs: 'macos',
-  Windows: 'windows',
-  Linux: 'linux',
-  Web: 'web',
+  Extension: "extension",
+  MacOs: "macos",
+  Windows: "windows",
+  Linux: "linux",
+  Web: "web",
 } as const;
 export type Platform = (typeof Platform)[keyof typeof Platform];
 
@@ -16,15 +16,15 @@ export type Platform = (typeof Platform)[keyof typeof Platform];
  * user turns analytics off.
  */
 export const LifecycleEvent = {
-  Installed: 'installed',
-  Updated: 'updated',
-  OptedOut: 'opted_out',
+  Installed: "installed",
+  Updated: "updated",
+  OptedOut: "opted_out",
 } as const;
 export type LifecycleEvent = (typeof LifecycleEvent)[keyof typeof LifecycleEvent];
 
 /** The system event of a page view. Only the first one that a collector records carries the referrer. */
-export const PAGE_VIEW = 'page_view';
-export const UNINSTALLED = 'uninstalled';
+export const PAGE_VIEW = "page_view";
+export const UNINSTALLED = "uninstalled";
 
 /**
  * The intake's `system_events`: the events it takes from every product without the product's allowlist. The collector
@@ -33,9 +33,9 @@ export const UNINSTALLED = 'uninstalled';
 export const SYSTEM_EVENTS: readonly string[] = [
   ...Object.values(LifecycleEvent),
   UNINSTALLED,
-  'welcome_opened',
+  "welcome_opened",
   PAGE_VIEW,
-  'install_click',
+  "install_click",
 ];
 
 /**
@@ -61,7 +61,7 @@ export interface UsageEvent {
 }
 
 /** Where an envelope's `id` comes from: the install id the collector makes, or the account id from `getId`. */
-export type IdKind = 'pseudonymous' | 'identified';
+export type IdKind = "pseudonymous" | "identified";
 
 /** What one request to the intake carries. */
 export interface Envelope {

@@ -12,30 +12,30 @@ import {
   type PageFields,
   type StorageAdapter,
   type Transport,
-} from '../src/exports.js';
-import { FakeClock } from './fakeClock.js';
-import { FakeFetch } from './fakeFetch.js';
+} from "../src/exports.js";
+import { FakeClock } from "./fakeClock.js";
+import { FakeFetch } from "./fakeFetch.js";
 
 /** The live key of an extension channel, the harness's default platform. */
-export const KEY = 'extension-aa131n3j11';
-export const SITE_KEY = 'site-aa131n3j11';
-export const DESKTOP_KEY = 'desktop-aa131n3j11';
-export const ENDPOINT = 'https://intake.example.com/v1/public/relay';
+export const KEY = "extension-aa131n3j11";
+export const SITE_KEY = "site-aa131n3j11";
+export const DESKTOP_KEY = "desktop-aa131n3j11";
+export const ENDPOINT = "https://intake.example.com/v1/public/relay";
 /** The intake's forget address, which the collector derives from `ENDPOINT`. */
-export const FORGET_URL = 'https://intake.example.com/v1/public/forget';
-export const VERSION = '4.2.0';
+export const FORGET_URL = "https://intake.example.com/v1/public/forget";
+export const VERSION = "4.2.0";
 /** A consented user's id in an identified channel. */
-export const USER_ID = 'c0ffee12';
+export const USER_ID = "c0ffee12";
 /** Returns the storage key the collector of channel `key` keeps `name` under. */
 export function storageKey(name: string, key = KEY): string {
   return `artel.${key}.${name}`;
 }
-export const QUEUE_KEY = storageKey('queue');
-export const STATE_KEY = storageKey('state');
+export const QUEUE_KEY = storageKey("queue");
+export const STATE_KEY = storageKey("state");
 /** The end of the retry wait every context keeps, in epoch milliseconds. */
-export const RETRY_AT_KEY = storageKey('retry_at');
-const BROWSER_LANGUAGE = 'pt-BR';
-const UI_LANGUAGE = 'zh-Hant-TW';
+export const RETRY_AT_KEY = storageKey("retry_at");
+const BROWSER_LANGUAGE = "pt-BR";
+const UI_LANGUAGE = "zh-Hant-TW";
 export const SEND_DELAY_MS = 5_000;
 export const RETRY_DELAY_MS = 1_000;
 export const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -91,7 +91,7 @@ type HarnessOverrides = Partial<CommonOptions> & {
  */
 export function newHarness(overrides: HarnessOverrides = {}): Harness {
   const fetch = new FakeFetch();
-  const clock = new FakeClock('2026-10-29T10:00:00');
+  const clock = new FakeClock("2026-10-29T10:00:00");
   const storage = newMemoryStorage();
   const errors: unknown[] = [];
   const relay = newHttpTransport(ENDPOINT, { fetch: fetch.fetch, clock });
@@ -137,11 +137,11 @@ export function newHarness(overrides: HarnessOverrides = {}): Harness {
   // The harness writes this state once, before the first collector. A restart reads what the storage holds by then and
   // ignores a `state` override.
   const defaultState = defaultStateOf(modeWithId(overrides.mode, overrides.getId)?.mode);
-  const initialState = 'state' in overrides ? overrides.state : defaultState;
+  const initialState = "state" in overrides ? overrides.state : defaultState;
   if (initialState !== undefined) {
     // The memory storage writes at once, before the collector reads anything.
     void storage.set(
-      storageKey('state', overrides.key ?? keyOf(overrides.platform ?? Platform.Extension)),
+      storageKey("state", overrides.key ?? keyOf(overrides.platform ?? Platform.Extension)),
       initialState,
     );
   }
@@ -173,7 +173,7 @@ function defaultStateOf(mode: Mode | undefined): AnalyticsState | undefined {
 
 function isEnvelopeBody(body: string): boolean {
   const parsed: unknown = JSON.parse(body);
-  return typeof parsed === 'object' && parsed !== null && 'events' in parsed;
+  return typeof parsed === "object" && parsed !== null && "events" in parsed;
 }
 
 /** Returns a key of the channel kind that takes `platform`. */
