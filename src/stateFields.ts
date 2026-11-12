@@ -1,6 +1,6 @@
-import { AnalyticsState, Mode } from './collectorTypes.js';
-import { Platform, type Envelope, type IdKind } from './envelope.js';
-import { primaryLanguage } from './fields.js';
+import { AnalyticsState, Mode } from "./collectorTypes.js";
+import { Platform, type Envelope, type IdKind } from "./envelope.js";
+import { primaryLanguage } from "./fields.js";
 
 export interface Build {
   platform: Platform;
@@ -8,7 +8,10 @@ export interface Build {
 }
 
 /** The fields that name the product build, as an envelope and the uninstall page carry them. */
-export type ProductFields = Pick<Envelope, 'platform' | 'version' | 'browser_language' | 'ui_language'>;
+export type ProductFields = Pick<
+  Envelope,
+  "platform" | "version" | "browser_language" | "ui_language"
+>;
 
 /** Everything the collector shapes by the user's state. */
 export interface StateFields {
@@ -47,7 +50,7 @@ export function channelTakes(mode: Mode, state: unknown): state is AnalyticsStat
 }
 
 /** Returns whether events of this build may carry a page, which the intake keeps only from a site channel. */
-export function carriesPage(build: Pick<Build, 'platform'>): boolean {
+export function carriesPage(build: Pick<Build, "platform">): boolean {
   return build.platform === Platform.Web;
 }
 
@@ -67,7 +70,10 @@ export function fieldsForState({
   browserLanguage: string | undefined;
   uiLanguage: string | undefined;
 }): StateFields {
-  const idKind = state === AnalyticsState.Pseudonymous || state === AnalyticsState.Identified ? state : undefined;
+  const idKind =
+    state === AnalyticsState.Pseudonymous || state === AnalyticsState.Identified
+      ? state
+      : undefined;
   const isNamed = idKind !== undefined;
   const shape = (tag: string | undefined): string | undefined =>
     tag === undefined || isNamed ? tag : primaryLanguage(tag);

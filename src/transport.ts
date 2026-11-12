@@ -1,4 +1,4 @@
-import { systemClock, type Clock } from './clock.js';
+import { systemClock, type Clock } from "./clock.js";
 
 /** What the intake answered: its HTTP status, 0 when the request did not reach it, and its `Retry-After` header. */
 export interface TransportResult {
@@ -34,19 +34,19 @@ export function newHttpTransport(
     const timer = clock.setTimeout(() => timeout.abort(), TIMEOUT_MS);
     try {
       const response = await fetch(endpoint, {
-        method: 'POST',
+        method: "POST",
         // This type skips a CORS preflight. The intake reads the body as JSON.
-        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        headers: { "content-type": "text/plain;charset=UTF-8" },
         body,
         // An extension with host access, or a page on the intake's own origin, would otherwise send the user's cookies
         // for that host. The intake reads none.
-        credentials: 'omit',
+        credentials: "omit",
         // A page's own policy could otherwise send its full address, which `getPage` exists to keep out.
-        referrerPolicy: 'no-referrer',
+        referrerPolicy: "no-referrer",
         keepalive: true,
         signal: timeout.signal,
       });
-      const retryAfter = response.headers.get('Retry-After');
+      const retryAfter = response.headers.get("Retry-After");
       return { status: response.status, ...(retryAfter !== null && { retryAfter }) };
     } catch {
       return { status: 0 };

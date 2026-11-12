@@ -1,6 +1,6 @@
-import type { PageFields } from './collectorTypes.js';
-import { PAGE_VIEW } from './envelope.js';
-import { pagePath, referrerHost } from './pagePath.js';
+import type { PageFields } from "./collectorTypes.js";
+import { PAGE_VIEW } from "./envelope.js";
+import { pagePath, referrerHost } from "./pagePath.js";
 
 /** What `getPage` gave when a method was called, shaped as the collector sends it. */
 export interface PageRead {
@@ -43,8 +43,10 @@ export function newPageReader({
     // A host outside TypeScript can return any value, or fields whose getters throw.
     try {
       const fields = getPage?.(name);
-      const page = stringField('page', fields?.page, reportError);
-      const referrer = mayCarryReferrer ? stringField('referrer', fields?.referrer, reportError) : undefined;
+      const page = stringField("page", fields?.page, reportError);
+      const referrer = mayCarryReferrer
+        ? stringField("referrer", fields?.referrer, reportError)
+        : undefined;
       const path = page === undefined ? undefined : checkedPath(page, reportError);
       const host = referrer === undefined ? undefined : referrerHost(referrer);
       const isPageHost = page !== undefined && host === referrerHost(page);
@@ -81,11 +83,17 @@ export function newPageReader({
 }
 
 /** Returns a page field that is a string, or reports and leaves out one that is not. */
-function stringField(name: string, value: unknown, reportError: (error: unknown) => void): string | undefined {
-  if (value === undefined || typeof value === 'string') {
+function stringField(
+  name: string,
+  value: unknown,
+  reportError: (error: unknown) => void,
+): string | undefined {
+  if (value === undefined || typeof value === "string") {
     return value;
   }
-  reportError(new TypeError(`artel: the ${name} getPage gave is a ${typeof value}, not a string, left out`));
+  reportError(
+    new TypeError(`artel: the ${name} getPage gave is a ${typeof value}, not a string, left out`),
+  );
   return undefined;
 }
 
@@ -96,7 +104,9 @@ function stringField(name: string, value: unknown, reportError: (error: unknown)
 function checkedPath(page: string, reportError: (error: unknown) => void): string | undefined {
   const path = pagePath(page);
   if (path === undefined) {
-    reportError(new Error('artel: a page that is neither a path nor a URL with a path was left out'));
+    reportError(
+      new Error("artel: a page that is neither a path nor a URL with a path was left out"),
+    );
   }
   return path;
 }

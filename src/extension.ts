@@ -1,6 +1,6 @@
-import { detectBrowser } from './browser.js';
-import { systemClock, type Clock } from './clock.js';
-import { newCollector, sendDelayMsOf } from './collector.js';
+import { detectBrowser } from "./browser.js";
+import { systemClock, type Clock } from "./clock.js";
+import { newCollector, sendDelayMsOf } from "./collector.js";
 import {
   AnalyticsState,
   Mode,
@@ -9,15 +9,15 @@ import {
   type Delivery,
   type ModeOptions,
   type UninstallParams,
-} from './collectorTypes.js';
-import { Platform, SYSTEM_EVENTS, type EventParams } from './envelope.js';
-import { checkEvent } from './eventCheck.js';
-import { reportTo } from './hostInput.js';
-import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from './queue.js';
-import type { StorageAdapter } from './storage.js';
-import { newWebLock } from './web.js';
+} from "./collectorTypes.js";
+import { Platform, SYSTEM_EVENTS, type EventParams } from "./envelope.js";
+import { checkEvent } from "./eventCheck.js";
+import { reportTo } from "./hostInput.js";
+import { parseQueue, QUEUE_KEY, type QueuedEnvelope } from "./queue.js";
+import type { StorageAdapter } from "./storage.js";
+import { newWebLock } from "./web.js";
 
-const FORWARD_TYPE = 'artel.track';
+const FORWARD_TYPE = "artel.track";
 /**
  * The event names the worker refuses from a content script: every system event, which the intake counts from any page
  * without the product's allowlist.
@@ -35,7 +35,7 @@ const MINUTE_MS = 60_000;
  * The options of `newExtensionCollector`: those of `newCollector` without `platform`, with `storage` and `version`
  * optional. An option left out or `undefined` takes its default.
  */
-export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version'> & {
+export type ExtensionCollectorOptions = Omit<CommonOptions, "storage" | "version"> & {
   /** The storage, `chrome.storage.local` by default. */
   storage?: StorageAdapter | undefined;
   /** The product version, the manifest's by default. */
@@ -58,7 +58,9 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, 'storage' | 'version
  * the worker, so the product builds it there. The worker's collector also sends what the pages queue, even after the
  * page closed.
  */
-export function newExtensionCollector<M extends Mode>(options: ExtensionCollectorOptions & { mode: M }): Collector<M>;
+export function newExtensionCollector<M extends Mode>(
+  options: ExtensionCollectorOptions & { mode: M },
+): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
   const isWorker = isServiceWorker();
   const closed = isWorker ? closeToContentScripts(options.onError) : Promise.resolve();
@@ -74,7 +76,11 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
   const built =
     options.mode === Mode.Anonymous
       ? newCollector({ ...options, ...defaults })
-      : newCollector({ ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) });
+      : newCollector({
+          ...options,
+          ...defaults,
+          browser: options.browser ?? (() => detectBrowser(navigator)),
+        });
   const collector = withUninstallPage(built, options.uninstallPage, options.onError);
   if (isWorker) {
     listenAsWorker(collector, {
@@ -113,7 +119,7 @@ function listenAsWorker(
   let isSendScheduled = false;
   storage.onChanged.addListener((changes, area) => {
     const change = changes[queueKey];
-    if (area !== 'local' || change === undefined || isSendScheduled || !addsEvents(change)) {
+    if (area !== "local" || change === undefined || isSendScheduled || !addsEvents(change)) {
       return;
     }
     isSendScheduled = true;
@@ -123,9 +129,9 @@ function listenAsWorker(
     }, sendDelayMs);
   });
   runtime.onInstalled.addListener(({ reason }) => {
-    if (reason === 'install') {
+    if (reason === "install") {
       void collector.installed();
-    } else if (reason === 'update') {
+    } else if (reason === "update") {
       void collector.updated();
     }
   });
@@ -180,15 +186,20 @@ function withUninstallPage(
 
 /** Tells whether a change of the stored queue adds an event to it, as a new envelope or one more event of an envelope. */
 function addsEvents({ oldValue, newValue }: { oldValue?: unknown; newValue?: unknown }): boolean {
-  const queueOf = (value: unknown): QueuedEnvelope[] => parseQueue(typeof value === 'string' ? value : undefined) ?? [];
-  const before = new Map(queueOf(oldValue).map(({ qid, envelope }) => [qid, envelope.events.length]));
-  return queueOf(newValue).some(({ qid, envelope }) => envelope.events.length > (before.get(qid) ?? 0));
+  const queueOf = (value: unknown): QueuedEnvelope[] =>
+    parseQueue(typeof value === "string" ? value : undefined) ?? [];
+  const before = new Map(
+    queueOf(oldValue).map(({ qid, envelope }) => [qid, envelope.events.length]),
+  );
+  return queueOf(newValue).some(
+    ({ qid, envelope }) => envelope.events.length > (before.get(qid) ?? 0),
+  );
 }
 
 /** Tells whether the caller runs in the extension's service worker, the one context that may set the access level. */
 function isServiceWorker(): boolean {
-  const scope: unknown = Reflect.get(globalThis, 'ServiceWorkerGlobalScope');
-  return typeof scope === 'function' && globalThis instanceof scope;
+  const scope: unknown = Reflect.get(globalThis, "ServiceWorkerGlobalScope");
+  return typeof scope === "function" && globalThis instanceof scope;
 }
 
 /**
@@ -198,10 +209,12 @@ function isServiceWorker(): boolean {
 async function closeToContentScripts(onError: ((error: Error) => void) | undefined): Promise<void> {
   try {
     const local = chromeApi().storage.local;
-    if (typeof local.setAccessLevel !== 'function') {
-      throw new TypeError('artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it');
+    if (typeof local.setAccessLevel !== "function") {
+      throw new TypeError(
+        "artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it",
+      );
     }
-    await local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+    await local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   } catch (error) {
     reportTo(onError, error);
   }
@@ -229,7 +242,7 @@ export function newChromeStorageAdapter(): StorageAdapter {
   return {
     get: async (key) => {
       const value = (await chromeApi().storage.local.get(key))[key];
-      return typeof value === 'string' ? value : undefined;
+      return typeof value === "string" ? value : undefined;
     },
     set: async (key, value) => {
       await chromeApi().storage.local.set({ [key]: value });
@@ -243,14 +256,18 @@ export function newChromeStorageAdapter(): StorageAdapter {
  */
 export async function forwardTrack(name: string, params?: EventParams): Promise<void> {
   try {
-    await chromeApi().runtime.sendMessage({ type: FORWARD_TYPE, name, ...(params !== undefined && { params }) });
+    await chromeApi().runtime.sendMessage({
+      type: FORWARD_TYPE,
+      name,
+      ...(params !== undefined && { params }),
+    });
   } catch {
     // The send fails while the service worker updates or is gone. The content script drops the event and does not fail.
   }
 }
 
 /** The part of the collector a content script uses: it tracks events, and the worker keeps the analytics state. */
-export type ContentScriptCollector = Pick<Collector, 'track'>;
+export type ContentScriptCollector = Pick<Collector, "track">;
 
 /**
  * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
@@ -268,7 +285,11 @@ export function newContentScriptCollector(): ContentScriptCollector {
  * `uninstalled`, which a content script has no reason to send. The limit guards the queue against a flood, and the
  * first event it drops in a minute goes to `onError`, so the drop is not silent.
  */
-function acceptForwarded(collector: Collector, clock: Clock, onError: ((error: Error) => void) | undefined): void {
+function acceptForwarded(
+  collector: Collector,
+  clock: Clock,
+  onError: ((error: Error) => void) | undefined,
+): void {
   let minuteStart = Number.NEGATIVE_INFINITY;
   let tracked = 0;
   const onMessage: MessageListener = (message, sender) => {
@@ -324,7 +345,10 @@ interface ChromeApi {
   storage: {
     onChanged: {
       addListener(
-        listener: (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void,
+        listener: (
+          changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+          area: string,
+        ) => void,
       ): void;
     };
     local: {
@@ -347,16 +371,18 @@ interface ChromeApi {
 
 /** Returns the global `chrome` API, or throws outside an extension context. */
 function chromeApi(): ChromeApi {
-  const chrome: unknown = Reflect.get(globalThis, 'chrome');
+  const chrome: unknown = Reflect.get(globalThis, "chrome");
   if (!isChromeApi(chrome)) {
-    throw new Error('artel: the chrome extension API is not available here');
+    throw new Error("artel: the chrome extension API is not available here");
   }
   return chrome;
 }
 
 /** Checks only that the extension runtime is there. A missing `storage` permission surfaces when storage is used. */
 function isChromeApi(value: unknown): value is ChromeApi {
-  return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'runtime') === 'object';
+  return (
+    typeof value === "object" && value !== null && typeof Reflect.get(value, "runtime") === "object"
+  );
 }
 
 /**
@@ -364,13 +390,17 @@ function isChromeApi(value: unknown): value is ChromeApi {
  * `REFUSED_NAMES`. Content scripts run among the page's scripts, so the worker cannot trust what they send.
  */
 function isForwarded(message: unknown): message is { name: string; params?: EventParams } {
-  if (typeof message !== 'object' || message === null || Reflect.get(message, 'type') !== FORWARD_TYPE) {
+  if (
+    typeof message !== "object" ||
+    message === null ||
+    Reflect.get(message, "type") !== FORWARD_TYPE
+  ) {
     return false;
   }
-  const name: unknown = Reflect.get(message, 'name');
+  const name: unknown = Reflect.get(message, "name");
   return (
-    typeof name === 'string' &&
+    typeof name === "string" &&
     !REFUSED_NAMES.has(name) &&
-    checkEvent(name, Reflect.get(message, 'params')) === undefined
+    checkEvent(name, Reflect.get(message, "params")) === undefined
   );
 }

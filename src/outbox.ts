@@ -1,8 +1,8 @@
-import type { Clock, TimerHandle } from './clock.js';
-import { daysBetween, parseDay, utcDateAt, type CalendarDate } from './calendar.js';
-import type { Envelope, UsageEvent } from './envelope.js';
-import { isTestKey, isUsableId, quoted } from './hostInput.js';
-import type { Lock } from './lock.js';
+import type { Clock, TimerHandle } from "./clock.js";
+import { daysBetween, parseDay, utcDateAt, type CalendarDate } from "./calendar.js";
+import type { Envelope, UsageEvent } from "./envelope.js";
+import { isTestKey, isUsableId, quoted } from "./hostInput.js";
+import type { Lock } from "./lock.js";
 import {
   newQueue,
   newRandomId,
@@ -10,14 +10,14 @@ import {
   type LeaseTerms,
   type QueuedEnvelope,
   type SealedEnvelope,
-} from './queue.js';
-import type { StorageAdapter } from './storage.js';
-import type { Transport, TransportResult } from './transport.js';
+} from "./queue.js";
+import type { StorageAdapter } from "./storage.js";
+import type { Transport, TransportResult } from "./transport.js";
 
 const RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
 /** Names the stored time, in epoch milliseconds, before which no context that shares the storage starts a send. */
-const RETRY_AT_KEY = 'retry_at';
+const RETRY_AT_KEY = "retry_at";
 /**
  * The time one send holds the lease on a queued envelope, twice the 30 s request limit of `newHttpTransport` in
  * `src/transport.ts`. The send renews the lease before each request. A host that stops mid-send blocks the envelope
@@ -42,7 +42,11 @@ interface Outbox {
    * Queues the event and sends it within the send delay, at once when its envelope is full, or with the pending retry.
    * Resolves to what the queue dropped to take it, whose marks may go back.
    */
-  add(fields: Omit<Envelope, 'events'>, event: UsageEvent, options?: { awaitsId?: boolean }): Promise<QueuedEnvelope[]>;
+  add(
+    fields: Omit<Envelope, "events">,
+    event: UsageEvent,
+    options?: { awaitsId?: boolean },
+  ): Promise<QueuedEnvelope[]>;
   /** Sends what is queued within the send delay, such as what an earlier run of the host left. */
   sendSoon(): void;
   /**
@@ -157,7 +161,9 @@ export function newOutbox({
    */
   function sendUnlessRetryPending(): Promise<void> {
     cancelSend();
-    sending = sending.then(async () => (retryTimer === undefined ? sendLeased() : undefined)).catch(reportError);
+    sending = sending
+      .then(async () => (retryTimer === undefined ? sendLeased() : undefined))
+      .catch(reportError);
     return sending;
   }
 
@@ -167,7 +173,7 @@ export function newOutbox({
    * now, so it holds no send for longer. The caller holds `lock`.
    */
   async function retryWaitMs(): Promise<number> {
-    const stored = (await storage.get(RETRY_AT_KEY)) ?? '';
+    const stored = (await storage.get(RETRY_AT_KEY)) ?? "";
     const waitMs = Math.max(0, Number(stored) - clock.now());
     if (waitMs <= MAX_RETRY_DELAY_MS) {
       return waitMs;
@@ -196,7 +202,10 @@ export function newOutbox({
       const wait = await retryWaitMs();
       return {
         waitMs: wait,
-        taken: wait > 0 ? undefined : { forgets: await queue.forgets(), leased: await queue.lease(leaseTerms()) },
+        taken:
+          wait > 0
+            ? undefined
+            : { forgets: await queue.forgets(), leased: await queue.lease(leaseTerms()) },
       };
     });
     if (taken === undefined) {
@@ -222,7 +231,10 @@ export function newOutbox({
    * queue, or one another holder took, is settled. One that waits for an id the product does not know yet stays leased
    * until the send ends.
    */
-  async function sealIfItMayLeave(item: QueuedEnvelope, unsettled: Set<string>): Promise<SealedEnvelope | undefined> {
+  async function sealIfItMayLeave(
+    item: QueuedEnvelope,
+    unsettled: Set<string>,
+  ): Promise<SealedEnvelope | undefined> {
     const identity = item.awaitsId === true ? await identify() : undefined;
     if (item.awaitsId === true && identity === undefined) {
       return undefined;
@@ -261,7 +273,7 @@ export function newOutbox({
       const { isSettled, askedWaitMs } = await deliver({
         body: JSON.stringify({ key, id }),
         transport: forgetTransport,
-        what: 'a forget',
+        what: "a forget",
         reportError,
         clock,
       });
@@ -297,7 +309,13 @@ export function newOutbox({
         unsettled.delete(item.qid);
         continue;
       }
-      const { isSettled, askedWaitMs } = await deliver({ body, transport, what: 'an envelope', reportError, clock });
+      const { isSettled, askedWaitMs } = await deliver({
+        body,
+        transport,
+        what: "an envelope",
+        reportError,
+        clock,
+      });
       if (!isSettled) {
         await waitForRetry(askedWaitMs);
         return;
@@ -371,10 +389,19 @@ async function deliver({
  * Only a product's own transport, outside TypeScript or with a bug, gives such a value.
  */
 function httpStatus(status: unknown, reportError: (error: unknown) => void): number {
-  if (typeof status === 'number' && Number.isInteger(status) && status >= 0 && status <= MAX_HTTP_STATUS) {
+  if (
+    typeof status === "number" &&
+    Number.isInteger(status) &&
+    status >= 0 &&
+    status <= MAX_HTTP_STATUS
+  ) {
     return status;
   }
-  reportError(new Error('artel: the transport answered a status that is no whole number from 0 to 599, read as 0'));
+  reportError(
+    new Error(
+      "artel: the transport answered a status that is no whole number from 0 to 599, read as 0",
+    ),
+  );
   return 0;
 }
 
@@ -394,7 +421,9 @@ async function answerOf(
   try {
     const answer = await Promise.race([transport(body), late]);
     // A null or undefined answer throws here, and reads as status 0.
-    return typeof answer === 'number' ? { status: answer } : { status: answer.status, retryAfter: answer.retryAfter };
+    return typeof answer === "number"
+      ? { status: answer }
+      : { status: answer.status, retryAfter: answer.retryAfter };
   } catch {
     return { status: 0 };
   } finally {
@@ -408,7 +437,7 @@ async function answerOf(
  * only a product's own transport outside TypeScript gives.
  */
 function retryAfterMs(value: unknown, now: number): number | undefined {
-  if (typeof value !== 'string') {
+  if (typeof value !== "string") {
     return undefined;
   }
   if (/^\d+$/.test(value)) {

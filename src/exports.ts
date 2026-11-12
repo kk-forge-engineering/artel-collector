@@ -1,5 +1,5 @@
-export { detectBrowser, BrowserName, type Browser, type NavigatorFields } from './browser.js';
-export { newCollector } from './collector.js';
+export { detectBrowser, BrowserName, type Browser, type NavigatorFields } from "./browser.js";
+export { newCollector } from "./collector.js";
 export {
   ActiveDaysBucket,
   AnalyticsState,
@@ -14,11 +14,11 @@ export {
   type PageOptions,
   type StateOf,
   type UninstallParams,
-} from './collectorTypes.js';
-export { Platform, type EventParams } from './envelope.js';
-export { checkEvent } from './eventCheck.js';
-export { checkOptions, isTestKey } from './hostInput.js';
-export { newMemoryStorage, type StorageAdapter } from './storage.js';
-export { newHttpTransport, type Transport, type TransportResult } from './transport.js';
-export type { Lock } from './lock.js';
-export { systemClock, type Clock, type TimerHandle } from './clock.js';
+} from "./collectorTypes.js";
+export { Platform, type EventParams } from "./envelope.js";
+export { checkEvent } from "./eventCheck.js";
+export { checkOptions, isTestKey } from "./hostInput.js";
+export { newMemoryStorage, type StorageAdapter } from "./storage.js";
+export { newHttpTransport, type Transport, type TransportResult } from "./transport.js";
+export type { Lock } from "./lock.js";
+export { systemClock, type Clock, type TimerHandle } from "./clock.js";

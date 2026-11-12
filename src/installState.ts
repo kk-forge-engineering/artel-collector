@@ -1,7 +1,14 @@
-import { Period, formatDay, localDateAt, parseDay, periodKey, type CalendarDate } from './calendar.js';
-import { LifecycleEvent, type Envelope, type UsageEvent } from './envelope.js';
-import { newRandomId } from './queue.js';
-import type { StorageAdapter } from './storage.js';
+import {
+  Period,
+  formatDay,
+  localDateAt,
+  parseDay,
+  periodKey,
+  type CalendarDate,
+} from "./calendar.js";
+import { LifecycleEvent, type Envelope, type UsageEvent } from "./envelope.js";
+import { newRandomId } from "./queue.js";
+import type { StorageAdapter } from "./storage.js";
 
 const SESSION_ID_LENGTH = 12;
 /**
@@ -13,24 +20,24 @@ const MAX_ACTIVE_DAYS = 21;
  * The last id after the host forgets the user. It is longer than the 64 characters of any id the collector takes, so
  * the next id reads as another user's.
  */
-const FORGOTTEN_ID = '<forgotten>'.repeat(6);
+const FORGOTTEN_ID = "<forgotten>".repeat(6);
 /** The install id's form: 16 random bytes as lowercase hex, as the intake expects it. */
 const INSTALL_ID_FORMAT = /^[\da-f]{32}$/;
 const INSTALL_ID_BYTES = 16;
 
 const StorageKey = {
-  InstallDay: 'install_day',
-  Installed: 'installed',
-  Version: 'version',
-  State: 'state',
+  InstallDay: "install_day",
+  Installed: "installed",
+  Version: "version",
+  State: "state",
   /** The random id of the pseudonymous state, `''` once the user left that state. */
-  InstallId: 'install_id',
+  InstallId: "install_id",
   /** The last id an envelope named the user by, `''` when none does, or `FORGOTTEN_ID` after the host forgot it. */
-  LastId: 'last_id',
-  Session: 'session',
-  SessionSeen: 'session_seen',
+  LastId: "last_id",
+  Session: "session",
+  SessionSeen: "session_seen",
   /** The local days with a queued or sent event, as a JSON list of `YYYY-MM-DD`. */
-  ActiveDays: 'active_days',
+  ActiveDays: "active_days",
   firstOf: (period: Period) => `first.${period}`,
 } as const;
 
@@ -69,7 +76,7 @@ interface InstallState {
    * again: first-of-period marks, the `installed` mark, and the `updated` version while it is still stored. A
    * first-of-day event also removes its day from the active days.
    */
-  giveBack(envelopes: readonly Pick<Envelope, 'version' | 'events'>[]): Promise<void>;
+  giveBack(envelopes: readonly Pick<Envelope, "version" | "events">[]): Promise<void>;
   /** Ends the session, so the next event starts a new one. */
   endSession(): Promise<void>;
   /** Marks the install and stores `version`. Resolves to true, or to false when the install was marked before. */
@@ -121,11 +128,11 @@ export function newInstallState({
   async function readActiveDays(): Promise<string[]> {
     let days: unknown;
     try {
-      days = JSON.parse((await storage.get(StorageKey.ActiveDays)) ?? '[]');
+      days = JSON.parse((await storage.get(StorageKey.ActiveDays)) ?? "[]");
     } catch {
       return [];
     }
-    return Array.isArray(days) ? days.filter((day): day is string => typeof day === 'string') : [];
+    return Array.isArray(days) ? days.filter((day): day is string => typeof day === "string") : [];
   }
 
   async function countActiveDay(day: string): Promise<void> {
@@ -138,12 +145,15 @@ export function newInstallState({
   /** Removes a day from the active days. The cap of 21 stops only the count of new days. */
   async function uncountActiveDay(day: string): Promise<void> {
     const days = await readActiveDays();
-    await storage.set(StorageKey.ActiveDays, JSON.stringify(days.filter((candidate) => candidate !== day)));
+    await storage.set(
+      StorageKey.ActiveDays,
+      JSON.stringify(days.filter((candidate) => candidate !== day)),
+    );
   }
 
   async function giveBackMark(period: Period, day: CalendarDate): Promise<void> {
     if ((await storage.get(StorageKey.firstOf(period))) === periodKey(period, day)) {
-      await storage.set(StorageKey.firstOf(period), '');
+      await storage.set(StorageKey.firstOf(period), "");
     }
   }
 
@@ -163,11 +173,14 @@ export function newInstallState({
       await giveBackFirstMarks(day, event.first ?? []);
     }
     if (event.name === LifecycleEvent.Installed) {
-      await storage.set(StorageKey.Installed, '');
+      await storage.set(StorageKey.Installed, "");
     }
     // A later `updated` of another version stored its own version, which stays.
-    if (event.name === LifecycleEvent.Updated && (await storage.get(StorageKey.Version)) === version) {
-      await storage.set(StorageKey.Version, '');
+    if (
+      event.name === LifecycleEvent.Updated &&
+      (await storage.get(StorageKey.Version)) === version
+    ) {
+      await storage.set(StorageKey.Version, "");
     }
   }
 
@@ -179,7 +192,8 @@ export function newInstallState({
     const stored = await storage.get(StorageKey.Session);
     const lastSeen = Number(await storage.get(StorageKey.SessionSeen));
     const isIdle = !(timestamp - lastSeen < sessionIdleMs);
-    const session = stored === undefined || stored === '' || isIdle || isNewDay ? newSessionId() : stored;
+    const session =
+      stored === undefined || stored === "" || isIdle || isNewDay ? newSessionId() : stored;
     await storage.set(StorageKey.Session, session);
     await storage.set(StorageKey.SessionSeen, String(timestamp));
     return session;
@@ -190,7 +204,7 @@ export function newInstallState({
 
     lastId: async () => {
       const id = await storage.get(StorageKey.LastId);
-      return id === '' ? undefined : id;
+      return id === "" ? undefined : id;
     },
 
     setLastId: (id) => storage.set(StorageKey.LastId, id),
@@ -207,7 +221,7 @@ export function newInstallState({
       return id;
     },
 
-    dropInstallId: () => storage.set(StorageKey.InstallId, ''),
+    dropInstallId: () => storage.set(StorageKey.InstallId, ""),
 
     giveBack: async (envelopes) => {
       for (const { version, events } of envelopes) {
@@ -220,16 +234,16 @@ export function newInstallState({
     setState: (state) => storage.set(StorageKey.State, state),
 
     // An empty session reads as none, so the next event takes a new one. The storage has no remove.
-    endSession: () => storage.set(StorageKey.Session, ''),
+    endSession: () => storage.set(StorageKey.Session, ""),
 
     takeInstall: async (version) => {
       const mark = await storage.get(StorageKey.Installed);
-      if (mark !== undefined && mark !== '') {
+      if (mark !== undefined && mark !== "") {
         return false;
       }
       // The version goes first, so a failed write leaves the install mark untaken.
       await storage.set(StorageKey.Version, version);
-      await storage.set(StorageKey.Installed, '1');
+      await storage.set(StorageKey.Installed, "1");
       return true;
     },
 
@@ -268,7 +282,7 @@ export function newInstallState({
 }
 
 function newSessionId(): string {
-  const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
+  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
   const bytes = crypto.getRandomValues(new Uint8Array(SESSION_ID_LENGTH));
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }

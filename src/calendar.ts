@@ -7,11 +7,11 @@ export interface CalendarDate {
 
 /** The periods an event can be the first of, in the order the intake lists them. */
 export const Period = {
-  Day: 'day',
-  Week: 'week',
-  Month: 'month',
-  Quarter: 'quarter',
-  Year: 'year',
+  Day: "day",
+  Week: "week",
+  Month: "month",
+  Quarter: "quarter",
+  Year: "year",
 } as const;
 export type Period = (typeof Period)[keyof typeof Period];
 
@@ -39,7 +39,7 @@ export function formatDay(date: CalendarDate): string {
 
 /** Parses a `YYYY-MM-DD` day, or returns undefined when the text is missing or has another form. */
 export function parseDay(text: string | undefined): CalendarDate | undefined {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text ?? '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text ?? "");
   if (!match) {
     return undefined;
   }
@@ -90,5 +90,5 @@ function utcMidnight(date: CalendarDate): number {
 }
 
 function pad(value: number): string {
-  return String(value).padStart(2, '0');
+  return String(value).padStart(2, "0");
 }

@@ -1,225 +1,247 @@
-import { describe, expect, it, vi } from 'vitest';
-import { newChromeStorageAdapter, newExtensionCollector } from './extension.js';
-import { newMemoryStorage } from './exports.js';
-import { FakeFetch } from '../tests/fakeFetch.js';
-import { ENDPOINT, KEY, USER_ID } from '../tests/harness.js';
-import { stubChrome, stubServiceWorker, type FakeChrome } from '../tests/fakeChrome.js';
-import { stubListenedPage } from '../tests/fakePage.js';
+import { describe, expect, it, vi } from "vitest";
+import { newChromeStorageAdapter, newExtensionCollector } from "./extension.js";
+import { newMemoryStorage } from "./exports.js";
+import { FakeFetch } from "../tests/fakeFetch.js";
+import { ENDPOINT, KEY, USER_ID } from "../tests/harness.js";
+import { stubChrome, stubServiceWorker, type FakeChrome } from "../tests/fakeChrome.js";
+import { stubListenedPage } from "../tests/fakePage.js";
 
-describe('newChromeStorageAdapter', () => {
-  it('keeps string values in chrome.storage.local and answers undefined for others', async () => {
+describe("newChromeStorageAdapter", () => {
+  it("keeps string values in chrome.storage.local and answers undefined for others", async () => {
     const chrome = stubChrome();
     const storage = newChromeStorageAdapter();
 
-    await storage.set('artel.session', 'k3j9x2m1qa0b');
-    chrome.items.set('artel.number', 1);
+    await storage.set("artel.session", "k3j9x2m1qa0b");
+    chrome.items.set("artel.number", 1);
 
-    expect(await storage.get('artel.session')).toBe('k3j9x2m1qa0b');
-    expect(await storage.get('artel.number')).toBeUndefined();
-    expect(await storage.get('artel.missing')).toBeUndefined();
+    expect(await storage.get("artel.session")).toBe("k3j9x2m1qa0b");
+    expect(await storage.get("artel.number")).toBeUndefined();
+    expect(await storage.get("artel.missing")).toBeUndefined();
   });
 
-  it('rejects outside an extension, so the collector reports it', async () => {
-    vi.stubGlobal('chrome', undefined);
+  it("rejects outside an extension, so the collector reports it", async () => {
+    vi.stubGlobal("chrome", undefined);
 
-    await expect(newChromeStorageAdapter().get('artel.session')).rejects.toThrow('chrome extension API');
+    await expect(newChromeStorageAdapter().get("artel.session")).rejects.toThrow(
+      "chrome extension API",
+    );
   });
 });
 
-describe('newExtensionCollector', () => {
+describe("newExtensionCollector", () => {
   /**
    * Stubs a Chrome 131 worker with no Web Locks, and returns the fake Chrome and the network the collector posts to.
    */
   function stubWorker(): { chrome: FakeChrome; fetch: FakeFetch } {
     const chrome = stubChrome();
     const fetch = new FakeFetch();
-    vi.stubGlobal('fetch', fetch.fetch);
-    vi.stubGlobal('navigator', {
-      language: 'pt-BR',
-      userAgentData: { brands: [{ brand: 'Google Chrome', version: '131' }] },
+    vi.stubGlobal("fetch", fetch.fetch);
+    vi.stubGlobal("navigator", {
+      language: "pt-BR",
+      userAgentData: { brands: [{ brand: "Google Chrome", version: "131" }] },
     });
     return { chrome, fetch };
   }
 
-  it('sends the manifest version and the primary browser language, over chrome.storage.local', async () => {
+  it("sends the manifest version and the primary browser language, over chrome.storage.local", async () => {
     const { chrome, fetch } = stubWorker();
-    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: "anonymous" });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
     const envelope = fetch.requests[0]?.envelope;
     expect(envelope).toMatchObject({
       key: KEY,
-      platform: 'extension',
-      version: '3.1.0',
-      browser_language: 'pt',
+      platform: "extension",
+      version: "3.1.0",
+      browser_language: "pt",
     });
-    expect(envelope).not.toHaveProperty('id');
-    expect(envelope).not.toHaveProperty('browser');
+    expect(envelope).not.toHaveProperty("id");
+    expect(envelope).not.toHaveProperty("browser");
     expect(chrome.items.size).toBeGreaterThan(0);
   });
 
-  it('sends no interface language unless the product gives one', async () => {
+  it("sends no interface language unless the product gives one", async () => {
     const { fetch } = stubWorker();
     const errors: Error[] = [];
     const usage = newExtensionCollector({
       key: KEY,
       endpoint: ENDPOINT,
-      mode: 'anonymous',
+      mode: "anonymous",
       onError: (error) => errors.push(error),
     });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope).not.toHaveProperty('ui_language');
+    expect(fetch.requests[0]?.envelope).not.toHaveProperty("ui_language");
     expect(errors).toEqual([]);
   });
 
-  it('sends the id, the browser and the full languages once the user is identified', async () => {
-    const { fetch } = stubWorker();
-    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'identified', getId: () => USER_ID });
-
-    await usage.setState('identified');
-    await usage.track('report_exported');
-    await usage.flush();
-
-    expect(fetch.requests[0]?.envelope).toMatchObject({
-      browser_language: 'pt-BR',
-      browser: { name: 'chrome', major: 131 },
-      id: USER_ID,
-    });
-  });
-
-  it('detects the browser in the pseudonymous state too', async () => {
-    const { fetch } = stubWorker();
-    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'pseudonymous' });
-
-    await usage.setState('pseudonymous');
-    await usage.track('report_exported');
-    await usage.flush();
-
-    expect(fetch.requests[0]?.envelope).toMatchObject({
-      id_kind: 'pseudonymous',
-      browser: { name: 'chrome', major: 131 },
-    });
-  });
-
-  it('sends the interface language the product gives', async () => {
+  it("sends the id, the browser and the full languages once the user is identified", async () => {
     const { fetch } = stubWorker();
     const usage = newExtensionCollector({
       key: KEY,
       endpoint: ENDPOINT,
-      mode: 'identified',
+      mode: "identified",
       getId: () => USER_ID,
-      uiLanguage: 'fr-CA',
     });
 
-    await usage.setState('identified');
-    await usage.track('report_exported');
+    await usage.setState("identified");
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope.ui_language).toBe('fr-CA');
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      browser_language: "pt-BR",
+      browser: { name: "chrome", major: 131 },
+      id: USER_ID,
+    });
   });
 
-  it('takes the version it is given over the manifest one, and reads no manifest for it', async () => {
+  it("detects the browser in the pseudonymous state too", async () => {
+    const { fetch } = stubWorker();
+    const usage = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: "pseudonymous" });
+
+    await usage.setState("pseudonymous");
+    await usage.track("report_exported");
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope).toMatchObject({
+      id_kind: "pseudonymous",
+      browser: { name: "chrome", major: 131 },
+    });
+  });
+
+  it("sends the interface language the product gives", async () => {
+    const { fetch } = stubWorker();
+    const usage = newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: "identified",
+      getId: () => USER_ID,
+      uiLanguage: "fr-CA",
+    });
+
+    await usage.setState("identified");
+    await usage.track("report_exported");
+    await usage.flush();
+
+    expect(fetch.requests[0]?.envelope.ui_language).toBe("fr-CA");
+  });
+
+  it("takes the version it is given over the manifest one, and reads no manifest for it", async () => {
     const { chrome, fetch } = stubWorker();
     chrome.runtime.getManifest = () => {
-      throw new Error('getManifest not implemented');
+      throw new Error("getManifest not implemented");
     };
-    const usage = newExtensionCollector({ key: KEY, version: '3.1.0-beta.2', endpoint: ENDPOINT, mode: 'anonymous' });
+    const usage = newExtensionCollector({
+      key: KEY,
+      version: "3.1.0-beta.2",
+      endpoint: ENDPOINT,
+      mode: "anonymous",
+    });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope.version).toBe('3.1.0-beta.2');
+    expect(fetch.requests[0]?.envelope.version).toBe("3.1.0-beta.2");
   });
 
-  it('takes the manifest version and chrome.storage.local for a version and a storage given as undefined', async () => {
+  it("takes the manifest version and chrome.storage.local for a version and a storage given as undefined", async () => {
     const { chrome, fetch } = stubWorker();
     const usage = newExtensionCollector({
       key: KEY,
       version: undefined,
       storage: undefined,
       endpoint: ENDPOINT,
-      mode: 'anonymous',
+      mode: "anonymous",
     });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope.version).toBe('3.1.0');
+    expect(fetch.requests[0]?.envelope.version).toBe("3.1.0");
     expect(chrome.items.size).toBeGreaterThan(0);
   });
 
-  it('builds outside an extension context with only a version, and sends no interface language', async () => {
-    vi.stubGlobal('chrome', undefined);
+  it("builds outside an extension context with only a version, and sends no interface language", async () => {
+    vi.stubGlobal("chrome", undefined);
     const fetch = new FakeFetch();
-    vi.stubGlobal('fetch', fetch.fetch);
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    vi.stubGlobal("fetch", fetch.fetch);
+    vi.stubGlobal("navigator", { language: "pt-BR" });
     const usage = newExtensionCollector({
       key: KEY,
-      version: '3.1.0',
+      version: "3.1.0",
       endpoint: ENDPOINT,
-      mode: 'anonymous',
+      mode: "anonymous",
       storage: newMemoryStorage(),
     });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope).toMatchObject({ platform: 'extension', version: '3.1.0' });
-    expect(fetch.requests[0]?.envelope).not.toHaveProperty('ui_language');
+    expect(fetch.requests[0]?.envelope).toMatchObject({ platform: "extension", version: "3.1.0" });
+    expect(fetch.requests[0]?.envelope).not.toHaveProperty("ui_language");
   });
 
-  it('keeps platform extension when the options carry another platform, which their type leaves out', async () => {
+  it("keeps platform extension when the options carry another platform, which their type leaves out", async () => {
     const { fetch } = stubWorker();
-    const desktop = { platform: 'macos' } as const;
-    const usage = newExtensionCollector({ ...desktop, key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+    const desktop = { platform: "macos" } as const;
+    const usage = newExtensionCollector({
+      ...desktop,
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: "anonymous",
+    });
 
-    await usage.track('report_exported');
+    await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.requests[0]?.envelope.platform).toBe('extension');
+    expect(fetch.requests[0]?.envelope.platform).toBe("extension");
   });
 });
 
-describe('the access level of chrome.storage.local', () => {
+describe("the access level of chrome.storage.local", () => {
   /** Makes a collector of an extension page or worker, and returns the fake Chrome and what reached onError. */
   function newCollectorIn(chrome: FakeChrome): { chrome: FakeChrome; errors: Error[] } {
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    vi.stubGlobal("navigator", { language: "pt-BR" });
     const errors: Error[] = [];
-    newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous', onError: (error) => errors.push(error) });
+    newExtensionCollector({
+      key: KEY,
+      endpoint: ENDPOINT,
+      mode: "anonymous",
+      onError: (error) => errors.push(error),
+    });
     return { chrome, errors };
   }
 
   it.each([
-    ['an extension page', false],
-    ['the service worker', true],
-  ])('adds no listener to the page in %s', (_, isWorker) => {
+    ["an extension page", false],
+    ["the service worker", true],
+  ])("adds no listener to the page in %s", (_, isWorker) => {
     if (isWorker) {
       stubServiceWorker();
     }
     stubChrome();
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    vi.stubGlobal("navigator", { language: "pt-BR" });
     const listened = stubListenedPage();
 
-    newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+    newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: "anonymous" });
 
     expect(listened).toEqual([]);
   });
 
-  it('closes it to content scripts in the service worker', async () => {
+  it("closes it to content scripts in the service worker", async () => {
     stubServiceWorker();
     const { chrome, errors } = newCollectorIn(stubChrome());
     await Promise.resolve();
 
-    expect(chrome.accessLevels).toEqual([{ accessLevel: 'TRUSTED_CONTEXTS' }]);
+    expect(chrome.accessLevels).toEqual([{ accessLevel: "TRUSTED_CONTEXTS" }]);
     expect(errors).toEqual([]);
   });
 
-  it('reads and writes no storage in the service worker until Chrome has set the level', async () => {
+  it("reads and writes no storage in the service worker until Chrome has set the level", async () => {
     stubServiceWorker();
     const chrome = stubChrome();
     let setLevel: () => void = () => undefined;
@@ -233,10 +255,10 @@ describe('the access level of chrome.storage.local', () => {
       reads.push(key);
       return get(key);
     };
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
-    const collector = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: 'anonymous' });
+    vi.stubGlobal("navigator", { language: "pt-BR" });
+    const collector = newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: "anonymous" });
 
-    const tracked = collector.track('a');
+    const tracked = collector.track("a");
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
@@ -244,10 +266,14 @@ describe('the access level of chrome.storage.local', () => {
     setLevel();
     await tracked;
 
-    expect([readsBefore, reads.length > 0, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([0, true, true]);
+    expect([readsBefore, reads.length > 0, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([
+      0,
+      true,
+      true,
+    ]);
   });
 
-  it('reads a storage the product gives no sooner in the service worker than Chrome has set the level', async () => {
+  it("reads a storage the product gives no sooner in the service worker than Chrome has set the level", async () => {
     stubServiceWorker();
     const chrome = stubChrome();
     let setLevel: () => void = () => undefined;
@@ -257,11 +283,11 @@ describe('the access level of chrome.storage.local', () => {
       });
     const items = new Map<string, string>();
     const reads: string[] = [];
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    vi.stubGlobal("navigator", { language: "pt-BR" });
     const collector = newExtensionCollector({
       key: KEY,
       endpoint: ENDPOINT,
-      mode: 'anonymous',
+      mode: "anonymous",
       storage: {
         get: async (key) => {
           reads.push(key);
@@ -273,7 +299,7 @@ describe('the access level of chrome.storage.local', () => {
       },
     });
 
-    const tracked = collector.track('a');
+    const tracked = collector.track("a");
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
@@ -284,51 +310,56 @@ describe('the access level of chrome.storage.local', () => {
     expect([readsBefore, reads.length > 0]).toEqual([0, true]);
   });
 
-  it('leaves it as it is in an extension page, which may not set it', () => {
+  it("leaves it as it is in an extension page, which may not set it", () => {
     const { chrome, errors } = newCollectorIn(stubChrome());
 
     expect(chrome.accessLevels).toEqual([]);
     expect(errors).toEqual([]);
   });
 
-  it('reports a call that rejects to onError, throws nothing, and still records', async () => {
+  it("reports a call that rejects to onError, throws nothing, and still records", async () => {
     stubServiceWorker();
     const chrome = stubChrome();
     chrome.storage.local.setAccessLevel = async () => {
-      throw new Error('not allowed');
+      throw new Error("not allowed");
     };
-    vi.stubGlobal('navigator', { language: 'pt-BR' });
+    vi.stubGlobal("navigator", { language: "pt-BR" });
     const errors: Error[] = [];
 
     await newExtensionCollector({
       key: KEY,
       endpoint: ENDPOINT,
-      mode: 'anonymous',
+      mode: "anonymous",
       onError: (error) => errors.push(error),
-    }).track('a');
+    }).track("a");
 
-    expect([errors, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([[new Error('not allowed')], true]);
+    expect([errors, chrome.items.has(`artel.${KEY}.queue`)]).toEqual([
+      [new Error("not allowed")],
+      true,
+    ]);
   });
 
-  it('reports a Chrome without setAccessLevel to onError, and throws nothing', () => {
+  it("reports a Chrome without setAccessLevel to onError, and throws nothing", () => {
     stubServiceWorker();
     const chrome = stubChrome();
-    Reflect.deleteProperty(chrome.storage.local, 'setAccessLevel');
+    Reflect.deleteProperty(chrome.storage.local, "setAccessLevel");
 
     const { errors } = newCollectorIn(chrome);
 
     expect(errors).toEqual([expect.any(Error)]);
   });
 
-  it('names the missing setAccessLevel in what it reports', () => {
+  it("names the missing setAccessLevel in what it reports", () => {
     stubServiceWorker();
     const chrome = stubChrome();
-    Reflect.deleteProperty(chrome.storage.local, 'setAccessLevel');
+    Reflect.deleteProperty(chrome.storage.local, "setAccessLevel");
 
     const { errors } = newCollectorIn(chrome);
 
     expect(errors).toEqual([
-      new TypeError('artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it'),
+      new TypeError(
+        "artel: chrome.storage.local.setAccessLevel is missing, so content scripts can write it",
+      ),
     ]);
   });
 });
