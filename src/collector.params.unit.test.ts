@@ -158,6 +158,7 @@ describe('reading the params', () => {
           throw new Error('getter');
         },
       },
+      'could not be read',
     ],
     [
       'a proxy whose keys throw',
@@ -169,15 +170,28 @@ describe('reading the params', () => {
           },
         },
       ),
+      'could not be read',
     ],
-  ])('resolves and reports params with %s, and records nothing', async (_, params) => {
+    ['a Map', fromUntypedHost<EventParams>(new Map([['format', 'pdf']])), 'are not a plain object'],
+    [
+      'an instance of a class',
+      fromUntypedHost<EventParams>(
+        new (class Params {
+          format = 'pdf';
+        })(),
+      ),
+      'are not a plain object',
+    ],
+  ])('resolves and reports params with %s, and records nothing', async (_, params, problem) => {
     const harness = newHarness();
 
     await expect(harness.collector.track('a', params)).resolves.toBeUndefined();
     await harness.settle();
 
     expect(harness.fetch.requests).toEqual([]);
-    expect(harness.errors).toEqual([new Error('getter')]);
+    expect(harness.errors.map((error) => String(error))).toEqual([
+      `Error: artel: event "a" has params that ${problem}, so it was not tracked`,
+    ]);
   });
 });
 

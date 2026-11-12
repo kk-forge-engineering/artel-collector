@@ -60,4 +60,40 @@ describe('checkEvent', () => {
   ])('returns the problem of %s, as track finds it', (name, params, problem) => {
     expect(checkEvent(name, params)).toBe(problem);
   });
+
+  it.each([
+    [
+      'a getter that throws',
+      {
+        get boom(): string {
+          throw new Error('getter');
+        },
+      },
+      'has params that could not be read',
+    ],
+    [
+      'a proxy whose keys throw',
+      new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error('keys');
+          },
+        },
+      ),
+      'has params that could not be read',
+    ],
+    ['a Map', new Map([['format', 'pdf']]), 'has params that are not a plain object'],
+    ['a Date', new Date(0), 'has params that are not a plain object'],
+    [
+      'an instance of a class',
+      new (class Params {
+        format = 'pdf';
+      })(),
+      'has params that are not a plain object',
+    ],
+    ['an object without a prototype', Object.assign(Object.create(null), { format: 'pdf' }), undefined],
+  ])('returns the problem of params that are %s, and never throws', (_case, params, problem) => {
+    expect(checkEvent('report_exported', params)).toBe(problem);
+  });
 });

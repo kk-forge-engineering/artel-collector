@@ -157,7 +157,7 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
   The intake keeps `welcome_opened` and `uninstalled` without an id at most once an hour per source, and drops the rest.
 
-  The collector refuses an event that breaks one of these rules, and `installed`, `updated` and `opted_out`, which only its own methods send. It reports a refused event to `onError`, naming the rule it breaks, and queues none of it. `track` copies the params once, when it is called, so a later change to the object reaches neither the check nor the event. Params whose reading throws, as a getter or a proxy may, go to `onError`, and nothing is recorded. The intake also drops the whole event when a param is off the allowlist or an enum param's value is off its list. The collector does not know the allowlist, so it cannot refuse these.
+  The collector refuses an event that breaks one of these rules, and `installed`, `updated` and `opted_out`, which only its own methods send. It reports a refused event to `onError`, naming the rule it breaks, and queues none of it. `track` copies the params once, when it is called, so a later change to the object reaches neither the check nor the event. The params must be a plain object, one of `Object` or without a prototype, so a `Map`, a `Date` or a class instance is refused. Params whose reading throws, as a getter or a proxy may, are refused the same way, and the report names them as params that could not be read. The intake also drops the whole event when a param is off the allowlist or an enum param's value is off its list. The collector does not know the allowlist, so it cannot refuse these.
 
 - `installed()` sends `installed` once per install. A later call sends no event. The extension's service worker and `newDesktopCollector` call it and `updated()` themselves, and a website calls it where its product counts an install. In the `opted_out` state it sends nothing and marks nothing, so a user who turns analytics back on still sends it.
 - `updated()` sends `updated` when `version` differs from the last version `installed()` or `updated()` stored, or when none is stored. Call it after `installed()`, so that a fresh install does not also count as an update. In the `opted_out` state it sends nothing and marks nothing.
@@ -330,7 +330,7 @@ The main module exports three checks that read no `chrome`, `navigator` or stora
 
 - `checkOptions({ key, version, platform, endpoint })` throws the `TypeError` a constructor throws for these options, and returns otherwise. It takes `transport` in place of `endpoint` too.
 - `isTestKey(key)` tells whether `key` is a channel's test key, `<kind>-test-<10 characters>`.
-- `checkEvent(name, params)` returns the problem `track` would report for the event, or `undefined` when it takes it.
+- `checkEvent(name, params)` returns the problem `track` would report for the event, or `undefined` when it takes it. It never throws: params whose reading throws return `has params that could not be read`.
 
 ## Development
 

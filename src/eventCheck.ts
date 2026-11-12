@@ -7,6 +7,7 @@ const NAME_FORMAT = /^[a-z][a-z\d_]{0,39}$/;
 const MAX_PARAMS = 16;
 /** The length of a string param the intake takes, in characters. */
 const MAX_PARAM_STRING_LENGTH = 64;
+const UNREADABLE_PARAMS = 'has params that could not be read';
 const LIFECYCLE_NAMES: ReadonlySet<unknown> = new Set(Object.values(LifecycleEvent));
 const ACTIVE_DAYS: readonly unknown[] = Object.values(ActiveDaysBucket);
 
@@ -35,7 +36,8 @@ const SYSTEM_EVENT_PARAMS: ReadonlyMap<string, Readonly<Record<string, ParamRule
 
 /**
  * Tells why the intake would drop the event, or returns undefined when its form passes. The check refuses `installed`,
- * `updated` and `opted_out`, because only the collector's own methods send them.
+ * `updated` and `opted_out`, because only the collector's own methods send them. It never throws: params whose getter
+ * or proxy throws are params it could not read.
  */
 export function checkEvent(name: unknown, params: unknown): string | undefined {
   if (typeof name !== 'string' || !NAME_FORMAT.test(name)) {
@@ -44,7 +46,11 @@ export function checkEvent(name: unknown, params: unknown): string | undefined {
   if (LIFECYCLE_NAMES.has(name)) {
     return 'is one only the collector sends';
   }
-  return paramsProblem(name, params);
+  try {
+    return paramsProblem(name, params);
+  } catch {
+    return UNREADABLE_PARAMS;
+  }
 }
 
 /**
@@ -56,32 +62,42 @@ export function acceptedEvent(
   given: EventParams | undefined,
   reportError: (error: unknown) => void,
 ): { params: EventParams | undefined } | undefined {
+  const refuse = (problem: string, cause?: unknown): undefined => {
+    const message = `artel: event ${quoted(name)} ${problem}, so it was not tracked`;
+    reportError(cause === undefined ? new Error(message) : new Error(message, { cause }));
+    return undefined;
+  };
   let params: EventParams | undefined;
   try {
     params = copyOfParams(given);
   } catch (error) {
-    reportError(error);
-    return undefined;
+    return refuse(UNREADABLE_PARAMS, error);
   }
   const problem = checkEvent(name, params);
-  if (problem !== undefined) {
-    reportError(new Error(`artel: event ${quoted(name)} ${problem}, so it was not tracked`));
-    return undefined;
-  }
-  return { params };
+  return problem === undefined ? { params } : refuse(problem);
 }
 
 /**
- * Returns a shallow copy of the own enumerable entries of object params, and other params as they are. The collector
- * checks and queues the copy, so a later change the host makes to its object reaches neither. Throws what a getter or a
- * proxy of the params throws.
+ * Returns a shallow copy of the own enumerable entries of plain object params, and other params as they are. The
+ * collector checks and queues the copy, so a later change the host makes to its object reaches neither. Throws what a
+ * getter or a proxy of the params throws.
  */
 function copyOfParams(params: EventParams | undefined): EventParams | undefined {
-  // An untyped host can pass null or a list. The function returns such params as they are, so the check refuses them.
-  const value: unknown = params;
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value))
-    : params;
+  // An untyped host can pass null, a list or a Map. The function returns such params as they are, so the check refuses
+  // them.
+  return isPlainObject(params) ? Object.fromEntries(Object.entries(params)) : params;
+}
+
+/**
+ * Tells whether `value` is an object of the `Object` constructor of any realm, or one without a prototype. Throws what a
+ * proxy's `getPrototypeOf` throws.
+ */
+function isPlainObject(value: unknown): value is object {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
 }
 
 /**
@@ -94,6 +110,10 @@ function paramsProblem(name: string, params: unknown): string | undefined {
   }
   if (typeof params !== 'object' || params === null || Array.isArray(params)) {
     return 'has params that are not an object';
+  }
+  // JSON would send a Map or a Date as other params than the host meant.
+  if (!isPlainObject(params)) {
+    return 'has params that are not a plain object';
   }
   // The check counts the keys before it reads any value. A content script can send params with many keys, and this
   // order keeps their cost low.
