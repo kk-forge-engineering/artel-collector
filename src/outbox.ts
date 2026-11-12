@@ -62,10 +62,12 @@ interface Outbox {
   forget(id: string): Promise<QueuedEnvelope[]>;
   /** Drops the envelopes that name a user or that await an id. Resolves to those whose marks may go back. */
   discardIdentified(): Promise<QueuedEnvelope[]>;
+  /** Resolves to whether the storage holds an envelope or a forget request to send. */
+  holdsRequests(): Promise<boolean>;
 }
 
 /**
- * Expects the caller to run `add`, `discard`, `forget` and `discardIdentified` inside its own `lock`, which it holds
+ * Expects the caller to run `add`, `discard`, `forget`, `discardIdentified` and `holdsRequests` inside its own `lock`, which it holds
  * for the whole recording of an event. The sends take the lock themselves.
  */
 export function newOutbox({
@@ -329,6 +331,7 @@ export function newOutbox({
       return queue.removeId(id);
     },
     discardIdentified: () => queue.removeIdentified(),
+    holdsRequests: () => queue.holdsRequests(),
   };
 }
 

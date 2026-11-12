@@ -92,6 +92,8 @@ describe('the events an extension page queues', () => {
 
   it('schedule no send for a change in another area, or for a stored queue that is no list of envelopes', async () => {
     const { worker, chrome } = newWorkerAndPage();
+    // Each collector reads the stored queue once at construction, before the test counts the reads.
+    await worker.clock.advance(0);
     const queueKey = `artel.${KEY}.queue`;
     const queued = JSON.stringify([{ qid: 'a', envelope: { events: [{ name: 'a', day: '2026-10-29' }] } }]);
     let flushes = 0;

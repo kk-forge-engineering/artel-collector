@@ -313,6 +313,18 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
     await outbox.send();
   }
 
+  /**
+   * Schedules a send when the storage holds requests, such as the events of a page or a window that closed before its
+   * send. The first call of the collector schedules it, after it settles the stored state.
+   */
+  async function sendWhatIsLeft(): Promise<void> {
+    // A storage that fails here fails the next call too, and that call reports it once.
+    const isLeft = await lock(() => outbox.holdsRequests()).catch(() => false);
+    if (isLeft) {
+      await serialize(async () => undefined, undefined);
+    }
+  }
+
   const collector: Collector = {
     track: async (name, given) => {
       const event = acceptedEvent(name, given, reportError);
@@ -400,6 +412,7 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
         };
       }, undefined),
   };
+  void sendWhatIsLeft();
   return collector;
 }
 
