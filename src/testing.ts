@@ -1,12 +1,12 @@
-import { systemClock, type Clock } from './clock.js';
-import { AnalyticsState, Mode, type Collector } from './collectorTypes.js';
-import type { EventParams } from './envelope.js';
-import { acceptedEvent } from './eventCheck.js';
-import { isUsableId, quoted, reportTo } from './hostInput.js';
-import { parseQueue, QUEUE_KEY } from './queue.js';
-import { channelTakes } from './stateFields.js';
-import { newChannelStorage, type StorageAdapter } from './storage.js';
-import { newThrottle } from './throttle.js';
+import { systemClock, type Clock } from "./clock.js";
+import { AnalyticsState, Mode, type Collector } from "./collectorTypes.js";
+import type { EventParams } from "./envelope.js";
+import { acceptedEvent } from "./eventCheck.js";
+import { isUsableId, quoted, reportTo } from "./hostInput.js";
+import { parseQueue, QUEUE_KEY } from "./queue.js";
+import { channelTakes } from "./stateFields.js";
+import { newChannelStorage, type StorageAdapter } from "./storage.js";
+import { newThrottle } from "./throttle.js";
 
 /** One event as a product tracked it. */
 export interface RecordedEvent {
@@ -69,13 +69,13 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
       if (!isInstalled && state !== AnalyticsState.OptedOut) {
         isInstalled = true;
         isVersionMarked = true;
-        record('installed');
+        record("installed");
       }
     },
     updated: async () => {
       if (!isVersionMarked && state !== AnalyticsState.OptedOut) {
         isVersionMarked = true;
-        record('updated');
+        record("updated");
       }
     },
     setState: async (next) => {
@@ -85,14 +85,18 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
         }
         state = next;
       } else {
-        reportError(new TypeError(`artel: a channel of mode ${quoted(channelMode)} takes no state ${quoted(next)}`));
+        reportError(
+          new TypeError(
+            `artel: a channel of mode ${quoted(channelMode)} takes no state ${quoted(next)}`,
+          ),
+        );
       }
     },
     getState: async () => state,
     flush: async () => undefined,
     forget: async (id) => {
       if (!isUsableId(id)) {
-        reportError(new TypeError('artel: forget takes an id of 1 to 64 characters'));
+        reportError(new TypeError("artel: forget takes an id of 1 to 64 characters"));
       }
     },
     uninstallParams: async () => undefined,

@@ -44,7 +44,7 @@ export interface RecordedForget {
 }
 
 /** The last segment of the intake's forget address, under any path. Every other request carries an envelope. */
-const FORGET_SEGMENT = '/forget';
+const FORGET_SEGMENT = "/forget";
 
 /**
  * A fake `fetch` that records every request, the envelopes in `requests` and the forget requests in `forgets`. It
@@ -53,7 +53,8 @@ const FORGET_SEGMENT = '/forget';
 export class FakeFetch {
   readonly requests: RecordedRequest[] = [];
   readonly forgets: RecordedForget[] = [];
-  private readonly outcomes: Array<{ status: number; headers?: Record<string, string> } | Error> = [];
+  private readonly outcomes: Array<{ status: number; headers?: Record<string, string> } | Error> =
+    [];
 
   /** Queues `times` answers with `status`, and `headers` when given, for the next requests. */
   respondNextWith(status: number, times = 1, headers?: Record<string, string>): void {
@@ -63,7 +64,7 @@ export class FakeFetch {
   }
 
   failNextWithNetworkError(): void {
-    this.outcomes.push(new TypeError('Failed to fetch'));
+    this.outcomes.push(new TypeError("Failed to fetch"));
   }
 
   get events(): SentEvent[] {
@@ -80,14 +81,14 @@ export class FakeFetch {
 
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (new URL(url).pathname.endsWith(FORGET_SEGMENT)) {
       this.forgets.push({ url, ...parseForget(init?.body) });
     } else {
       this.requests.push({
         url,
         method: init?.method,
-        contentType: headers.get('content-type') ?? undefined,
+        contentType: headers.get("content-type") ?? undefined,
         keepalive: init?.keepalive,
         envelope: parseEnvelope(init?.body),
       });
@@ -110,7 +111,7 @@ function eventNamesOf(envelope: Envelope): string[] {
 }
 
 function parseEnvelope(body: unknown): Envelope {
-  if (typeof body !== 'string') {
+  if (typeof body !== "string") {
     throw new Error(`expected a string body, got ${typeof body}`);
   }
   const envelope: unknown = JSON.parse(body);
@@ -121,14 +122,14 @@ function parseEnvelope(body: unknown): Envelope {
 }
 
 function parseForget(body: unknown): { key: unknown; id: unknown } {
-  const forget: unknown = typeof body === 'string' ? JSON.parse(body) : undefined;
-  if (typeof forget !== 'object' || forget === null || Object.keys(forget).join() !== 'key,id') {
+  const forget: unknown = typeof body === "string" ? JSON.parse(body) : undefined;
+  if (typeof forget !== "object" || forget === null || Object.keys(forget).join() !== "key,id") {
     throw new Error(`expected a forget body of key and id, got ${String(body)}`);
   }
-  return { key: Reflect.get(forget, 'key'), id: Reflect.get(forget, 'id') };
+  return { key: Reflect.get(forget, "key"), id: Reflect.get(forget, "id") };
 }
 
 /** Checks only for the events list. The tests assert the rest of the shape themselves. */
 function isEnvelope(value: unknown): value is Envelope {
-  return typeof value === 'object' && value !== null && Array.isArray(Reflect.get(value, 'events'));
+  return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "events"));
 }

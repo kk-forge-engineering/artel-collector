@@ -1,15 +1,24 @@
-import { vi } from 'vitest';
-import { newExtensionCollector } from '../src/extension.js';
-import { Mode, newHttpTransport, newMemoryStorage, type Collector, type StorageAdapter } from '../src/exports.js';
-import { FakeClock } from './fakeClock.js';
-import { FakeFetch } from './fakeFetch.js';
-import { ENDPOINT, KEY, RETRY_DELAY_MS, SEND_DELAY_MS } from './harness.js';
+import { vi } from "vitest";
+import { newExtensionCollector } from "../src/extension.js";
+import {
+  Mode,
+  newHttpTransport,
+  newMemoryStorage,
+  type Collector,
+  type StorageAdapter,
+} from "../src/exports.js";
+import { FakeClock } from "./fakeClock.js";
+import { FakeFetch } from "./fakeFetch.js";
+import { ENDPOINT, KEY, RETRY_DELAY_MS, SEND_DELAY_MS } from "./harness.js";
 
-const EXTENSION_ID = 'faalhcmobmdfdmmniiplhoniamdooejf';
+const EXTENSION_ID = "faalhcmobmdfdmmniiplhoniamdooejf";
 
 type MessageListener = (message: unknown, sender: { id?: string }) => undefined;
 type InstalledListener = (details: { reason: string }) => void;
-type ChangeListener = (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void;
+type ChangeListener = (
+  changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+  area: string,
+) => void;
 
 /** A Chrome extension context in memory: storage, messages between contexts and the uninstall page. */
 export class FakeChrome {
@@ -18,7 +27,7 @@ export class FakeChrome {
   readonly installedListeners = new Set<InstalledListener>();
   readonly startupListeners = new Set<() => void>();
   readonly changeListeners = new Set<ChangeListener>();
-  uninstallUrl = '';
+  uninstallUrl = "";
   isWorkerGone = false;
   /** The access levels `chrome.storage.local.setAccessLevel` was called with. */
   readonly accessLevels: unknown[] = [];
@@ -35,7 +44,7 @@ export class FakeChrome {
           this.items.set(key, value);
         }
         for (const listener of this.changeListeners) {
-          listener(changes, 'local');
+          listener(changes, "local");
         }
       },
       setAccessLevel: async (options: unknown): Promise<void> => {
@@ -49,10 +58,13 @@ export class FakeChrome {
 
   readonly runtime = {
     id: EXTENSION_ID,
-    getManifest: (): { version: string } => ({ version: '3.1.0' }),
-    sendMessage: async (message: unknown, sender: { id?: string } = { id: EXTENSION_ID }): Promise<unknown> => {
+    getManifest: (): { version: string } => ({ version: "3.1.0" }),
+    sendMessage: async (
+      message: unknown,
+      sender: { id?: string } = { id: EXTENSION_ID },
+    ): Promise<unknown> => {
       if (this.isWorkerGone) {
-        throw new Error('Could not establish connection. Receiving end does not exist.');
+        throw new Error("Could not establish connection. Receiving end does not exist.");
       }
       for (const listener of this.listeners) {
         listener(message, sender);
@@ -66,7 +78,8 @@ export class FakeChrome {
       addListener: (listener: MessageListener): void => void this.listeners.add(listener),
     },
     onInstalled: {
-      addListener: (listener: InstalledListener): void => void this.installedListeners.add(listener),
+      addListener: (listener: InstalledListener): void =>
+        void this.installedListeners.add(listener),
     },
     onStartup: {
       addListener: (listener: () => void): void => void this.startupListeners.add(listener),
@@ -74,7 +87,7 @@ export class FakeChrome {
   };
 
   /** Fires `chrome.runtime.onInstalled`, as Chrome does after an install or an update. */
-  install(reason: 'install' | 'update' | 'chrome_update'): void {
+  install(reason: "install" | "update" | "chrome_update"): void {
     for (const listener of this.installedListeners) {
       listener({ reason });
     }
@@ -84,7 +97,7 @@ export class FakeChrome {
 /** Puts a fresh `FakeChrome` in place of the global `chrome`. */
 export function stubChrome(): FakeChrome {
   const chrome = new FakeChrome();
-  vi.stubGlobal('chrome', chrome);
+  vi.stubGlobal("chrome", chrome);
   return chrome;
 }
 
@@ -92,7 +105,7 @@ export function stubChrome(): FakeChrome {
 export function stubServiceWorker(): void {
   const scope = (): undefined => undefined;
   Object.defineProperty(scope, Symbol.hasInstance, { value: () => true });
-  vi.stubGlobal('ServiceWorkerGlobalScope', scope);
+  vi.stubGlobal("ServiceWorkerGlobalScope", scope);
 }
 
 /** An extension collector over fakes, with the fake Chrome, network and clock it uses. */
@@ -129,9 +142,9 @@ export function newExtensionHarness({
     stubServiceWorker();
   }
   const chrome = stubChrome();
-  vi.stubGlobal('navigator', { language: 'pt-BR' });
+  vi.stubGlobal("navigator", { language: "pt-BR" });
   const fetch = new FakeFetch();
-  const clock = new FakeClock('2026-10-29T10:00:00');
+  const clock = new FakeClock("2026-10-29T10:00:00");
   const errors: Error[] = [];
   const collector = newExtensionCollector({
     key: KEY,
@@ -143,5 +156,12 @@ export function newExtensionHarness({
     ...(uninstallPage !== undefined && { uninstallPage }),
     ...(version !== undefined && { version }),
   });
-  return { collector, chrome, fetch, clock, errors, settle: () => clock.advance(SEND_DELAY_MS + RETRY_DELAY_MS) };
+  return {
+    collector,
+    chrome,
+    fetch,
+    clock,
+    errors,
+    settle: () => clock.advance(SEND_DELAY_MS + RETRY_DELAY_MS),
+  };
 }

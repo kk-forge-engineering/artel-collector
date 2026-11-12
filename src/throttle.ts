@@ -1,4 +1,4 @@
-import type { TrackOptions } from './collectorTypes.js';
+import type { TrackOptions } from "./collectorTypes.js";
 
 /**
  * Remembers in memory when each event name last went from a call with `throttleMs`. The window is leading-edge: the
@@ -43,7 +43,9 @@ export function newThrottle(): Throttle {
  * Returns `{ throttleMs }` from `track`'s options, with `throttleMs` undefined when they name none. Returns undefined
  * when `throttleMs` is no finite number from 0, when the options are no object, or when reading them throws.
  */
-export function throttleOf(options: TrackOptions | undefined): { throttleMs: number | undefined } | undefined {
+export function throttleOf(
+  options: TrackOptions | undefined,
+): { throttleMs: number | undefined } | undefined {
   const value: unknown = options;
   if (value === undefined) {
     return { throttleMs: undefined };
@@ -51,12 +53,15 @@ export function throttleOf(options: TrackOptions | undefined): { throttleMs: num
   let throttleMs: unknown;
   try {
     // An untyped host can pass options of any kind, such as ones with a getter that throws.
-    throttleMs = typeof value === 'object' && value !== null ? Reflect.get(value, 'throttleMs') : Number.NaN;
+    throttleMs =
+      typeof value === "object" && value !== null ? Reflect.get(value, "throttleMs") : Number.NaN;
   } catch {
     return undefined;
   }
   if (throttleMs === undefined) {
     return { throttleMs: undefined };
   }
-  return typeof throttleMs === 'number' && Number.isFinite(throttleMs) && throttleMs >= 0 ? { throttleMs } : undefined;
+  return typeof throttleMs === "number" && Number.isFinite(throttleMs) && throttleMs >= 0
+    ? { throttleMs }
+    : undefined;
 }

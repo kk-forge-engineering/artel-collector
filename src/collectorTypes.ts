@@ -1,10 +1,10 @@
-import type { Browser } from './browser.js';
-import type { Clock } from './clock.js';
-import type { EventParams, Platform } from './envelope.js';
-import type { Lock } from './lock.js';
-import type { ProductFields } from './stateFields.js';
-import type { StorageAdapter } from './storage.js';
-import type { Transport } from './transport.js';
+import type { Browser } from "./browser.js";
+import type { Clock } from "./clock.js";
+import type { EventParams, Platform } from "./envelope.js";
+import type { Lock } from "./lock.js";
+import type { ProductFields } from "./stateFields.js";
+import type { StorageAdapter } from "./storage.js";
+import type { Transport } from "./transport.js";
 
 /**
  * What a channel may collect at most, as set in the intake's admin. The collector's mode matches its channel's. Each
@@ -12,28 +12,28 @@ import type { Transport } from './transport.js';
  * id.
  */
 export const Mode = {
-  Anonymous: 'anonymous',
-  Pseudonymous: 'pseudonymous',
-  Identified: 'identified',
+  Anonymous: "anonymous",
+  Pseudonymous: "pseudonymous",
+  Identified: "identified",
 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
 /** The user's analytics state, which the collector stores and which decides what it sends. Users start anonymous. */
 export const AnalyticsState = {
   /** Sends nothing. Switching to it sends one `opted_out`, with no id or browser, and drops what was not sent. */
-  OptedOut: 'opted_out',
+  OptedOut: "opted_out",
   /** Sends events with no id or browser, the primary languages only and coarse ages. Needs no consent. */
-  Anonymous: 'anonymous',
+  Anonymous: "anonymous",
   /**
    * Sends a random install id the collector makes and stores, the browser, the full languages and exact ages. Needs
    * consent. A pseudonymous or identified channel takes it.
    */
-  Pseudonymous: 'pseudonymous',
+  Pseudonymous: "pseudonymous",
   /**
    * Sends what the pseudonymous state sends, with the id from `getId` in place of the install id. Needs consent. Only
    * an identified channel takes it.
    */
-  Identified: 'identified',
+  Identified: "identified",
 } as const;
 export type AnalyticsState = (typeof AnalyticsState)[keyof typeof AnalyticsState];
 
@@ -42,7 +42,10 @@ export type StateOf<M extends Mode> = M extends typeof Mode.Identified
   ? AnalyticsState
   : M extends typeof Mode.Pseudonymous
     ? Exclude<AnalyticsState, typeof AnalyticsState.Identified>
-    : Exclude<AnalyticsState, typeof AnalyticsState.Pseudonymous | typeof AnalyticsState.Identified>;
+    : Exclude<
+        AnalyticsState,
+        typeof AnalyticsState.Pseudonymous | typeof AnalyticsState.Identified
+      >;
 
 /**
  * Returns the user's id, or undefined while the product does not know it yet. The collector never makes one up. The
@@ -89,7 +92,9 @@ export interface CommonOptions {
 }
 
 /** Where envelopes go: the intake's address, or the product's own transport instead. */
-export type Delivery = { endpoint: string; transport?: never } | { transport: Transport; endpoint?: never };
+export type Delivery =
+  | { endpoint: string; transport?: never }
+  | { transport: Transport; endpoint?: never };
 
 /**
  * The browser the product runs in, or a function that returns it, such as `() => detectBrowser(navigator)`. The
@@ -149,11 +154,11 @@ export interface PageFields {
 
 /** Bucket for the number of days with at least one event. */
 export const ActiveDaysBucket = {
-  None: '0',
-  One: '1',
-  TwoToFive: '2-5',
-  SixToTwenty: '6-20',
-  TwentyOneOrMore: '21+',
+  None: "0",
+  One: "1",
+  TwoToFive: "2-5",
+  SixToTwenty: "6-20",
+  TwentyOneOrMore: "21+",
 } as const;
 export type ActiveDaysBucket = (typeof ActiveDaysBucket)[keyof typeof ActiveDaysBucket];
 

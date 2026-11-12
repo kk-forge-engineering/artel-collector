@@ -1,5 +1,5 @@
-import { systemClock, type Clock } from './clock.js';
-import type { CollectorOptions } from './collectorTypes.js';
+import { systemClock, type Clock } from "./clock.js";
+import type { CollectorOptions } from "./collectorTypes.js";
 
 /** What the intake answered: its HTTP status, 0 when the request did not reach it, and its `Retry-After` header. */
 export interface TransportResult {
@@ -35,19 +35,19 @@ export function newHttpTransport(
     const timer = clock.setTimeout(() => timeout.abort(), TIMEOUT_MS);
     try {
       const response = await fetch(endpoint, {
-        method: 'POST',
+        method: "POST",
         // This type skips a CORS preflight. The intake reads the body as JSON.
-        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        headers: { "content-type": "text/plain;charset=UTF-8" },
         body,
         // An extension with host access, or a page on the intake's own origin, would otherwise send the user's cookies
         // for that host. The intake reads none.
-        credentials: 'omit',
+        credentials: "omit",
         // A page's own policy could otherwise send its full address, which `getPage` exists to keep out.
-        referrerPolicy: 'no-referrer',
+        referrerPolicy: "no-referrer",
         keepalive: true,
         signal: timeout.signal,
       });
-      const retryAfter = response.headers.get('Retry-After');
+      const retryAfter = response.headers.get("Retry-After");
       return { status: response.status, ...(retryAfter !== null && { retryAfter }) };
     } catch {
       return { status: 0 };
@@ -61,7 +61,10 @@ export function newHttpTransport(
  * Returns the transport of the envelopes and that of the forget requests. A product's own transport takes both kinds
  * of request.
  */
-export function transportsOf(options: CollectorOptions): { transport: Transport; forgetTransport: Transport } {
+export function transportsOf(options: CollectorOptions): {
+  transport: Transport;
+  forgetTransport: Transport;
+} {
   if (options.transport !== undefined) {
     return { transport: options.transport, forgetTransport: options.transport };
   }
@@ -79,9 +82,9 @@ function forgetUrlOf(endpoint: string): string {
   const url = new URL(endpoint);
   const path = url.pathname;
   let end = path.length;
-  while (end > 0 && path[end - 1] === '/') {
+  while (end > 0 && path[end - 1] === "/") {
     end--;
   }
-  url.pathname = `${path.slice(0, path.lastIndexOf('/', end - 1) + 1)}forget`;
+  url.pathname = `${path.slice(0, path.lastIndexOf("/", end - 1) + 1)}forget`;
   return url.href;
 }

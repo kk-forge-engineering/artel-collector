@@ -1,4 +1,4 @@
-import type { Clock, TimerHandle } from '../src/exports.js';
+import type { Clock, TimerHandle } from "../src/exports.js";
 
 interface Timer {
   due: number;

@@ -53,13 +53,13 @@ One line per context makes its collector. `key`, `version`, `endpoint` and `unin
 
 ```ts
 // a website or a web app
-const analytics = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
+const analytics = newWebCollector({ key, version, endpoint, mode: "anonymous" });
 // a Chrome extension: the service worker, at its top level, and each of its pages, such as the popup
-const analytics = newExtensionCollector({ key, endpoint, mode: 'anonymous', uninstallPage });
+const analytics = newExtensionCollector({ key, endpoint, mode: "anonymous", uninstallPage });
 // a content script of that extension, which hands its events to the service worker
 const analytics = newContentScriptCollector();
 // a window of a desktop app, such as a Tauri webview, where `platform` is 'macos', 'windows' or 'linux'
-const analytics = newDesktopCollector({ key, version, endpoint, platform, mode: 'anonymous' });
+const analytics = newDesktopCollector({ key, version, endpoint, platform, mode: "anonymous" });
 ```
 
 A channel of another mode passes it, and `getId` in the identified mode, such as `mode: 'identified', getId`. A site whose paths carry a secret or a person passes `getPage: () => ({ page: route.pattern, referrer: document.referrer })` to send the route pattern instead.
@@ -67,10 +67,10 @@ A channel of another mode passes it, and `getId` in the identified mode, such as
 Then the product tracks what the user does, and sets the analytics state when the user picks one, here in a pseudonymous channel:
 
 ```ts
-const analytics = newWebCollector({ key, version, endpoint, mode: 'pseudonymous' });
-void analytics.track('report_exported', { format: 'pdf', pages: 12, with_images: true });
-void analytics.setState(consented ? 'pseudonymous' : 'anonymous');
-void analytics.setState('opted_out'); // the user turned analytics off
+const analytics = newWebCollector({ key, version, endpoint, mode: "pseudonymous" });
+void analytics.track("report_exported", { format: "pdf", pages: 12, with_images: true });
+void analytics.setState(consented ? "pseudonymous" : "anonymous");
+void analytics.setState("opted_out"); // the user turned analytics off
 ```
 
 The collectors do the rest themselves:
@@ -221,9 +221,9 @@ For a website or a web app. The desktop module builds on its storage and lock.
 A site sets up page views in two lines:
 
 ```ts
-import { newWebCollector, trackPageViews } from '@kk-forge/artel-collector/web';
+import { newWebCollector, trackPageViews } from "@kk-forge/artel-collector/web";
 
-const analytics = newWebCollector({ key, version, endpoint, mode: 'anonymous' });
+const analytics = newWebCollector({ key, version, endpoint, mode: "anonymous" });
 trackPageViews(analytics);
 ```
 
@@ -241,20 +241,20 @@ For a Chrome extension. Its service worker and its pages each make a collector w
 
 ```ts
 // service worker
-import { newExtensionCollector } from '@kk-forge/artel-collector/extension';
+import { newExtensionCollector } from "@kk-forge/artel-collector/extension";
 
 const analytics = newExtensionCollector({
   key,
   endpoint,
-  mode: 'anonymous',
-  uninstallPage: 'https://example.com/uninstall',
+  mode: "anonymous",
+  uninstallPage: "https://example.com/uninstall",
 });
 
 // content script
-import { newContentScriptCollector } from '@kk-forge/artel-collector/extension';
+import { newContentScriptCollector } from "@kk-forge/artel-collector/extension";
 
 const analytics = newContentScriptCollector();
-void analytics.track('link_shared', { target: 'clipboard' });
+void analytics.track("link_shared", { target: "clipboard" });
 ```
 
 ### `@kk-forge/artel-collector/desktop`

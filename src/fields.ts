@@ -1,7 +1,7 @@
-import { Period, daysBetween, formatDay, monthsBetween } from './calendar.js';
-import { ActiveDaysBucket, type PageFields } from './collectorTypes.js';
-import type { EventParams, UsageEvent } from './envelope.js';
-import type { EventStamp } from './installState.js';
+import { Period, daysBetween, formatDay, monthsBetween } from "./calendar.js";
+import { ActiveDaysBucket, type PageFields } from "./collectorTypes.js";
+import type { EventParams, UsageEvent } from "./envelope.js";
+import type { EventStamp } from "./installState.js";
 
 // The intake takes `version` and the language fields only in these formats. The intake refuses an envelope with a field
 // that breaks them, and all its events are lost. So the collector drops a bad language, and its constructor throws for
@@ -13,21 +13,25 @@ const MAX_LANGUAGE_LENGTH = 16;
 
 /** Checks a product version, such as `1.2.3` or `1.2.3-beta.1`, against the format and length the intake takes. */
 export function isVersion(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= MAX_VERSION_LENGTH && VERSION_FORMAT.test(value);
+  return (
+    typeof value === "string" && value.length <= MAX_VERSION_LENGTH && VERSION_FORMAT.test(value)
+  );
 }
 
 /** Checks a language tag, such as `en`, `pt-BR` or `zh-Hant-TW`, against the format and length the intake takes. */
 export function isLanguage(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= MAX_LANGUAGE_LENGTH && LANGUAGE_FORMAT.test(value);
+  return (
+    typeof value === "string" && value.length <= MAX_LANGUAGE_LENGTH && LANGUAGE_FORMAT.test(value)
+  );
 }
 
 /** Returns the tag with `-` for each `_`, as `en_US` becomes `en-US`. The intake reads the tag this way too. */
 export function languageTag(value: string | undefined): string | undefined {
-  return typeof value === 'string' ? value.replaceAll('_', '-') : value;
+  return typeof value === "string" ? value.replaceAll("_", "-") : value;
 }
 
 export function primaryLanguage(tag: string): string {
-  return tag.split('-')[0] ?? tag;
+  return tag.split("-")[0] ?? tag;
 }
 
 /** The highest exact age in days. The intake reads 31 as 31 days or more. */
@@ -58,7 +62,7 @@ export function uninstalledParams(
   { isExact }: { isExact: boolean },
 ): EventParams | undefined {
   const age = params?.age_days;
-  return typeof age === 'number' ? { ...params, age_days: ageInDays(age, { isExact }) } : params;
+  return typeof age === "number" ? { ...params, age_days: ageInDays(age, { isExact }) } : params;
 }
 
 /** Returns the age capped at 25 months when `isExact`, and its bucket otherwise. */

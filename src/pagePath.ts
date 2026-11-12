@@ -7,9 +7,9 @@ const MAX_PAGE_LENGTH = 256;
 /** The length of a referrer host the intake keeps. */
 const MAX_REFERRER_LENGTH = 128;
 /** What the collector sends in place of a segment that holds an address. */
-const ADDRESS_SEGMENT = ':address';
+const ADDRESS_SEGMENT = ":address";
 /** The base `URL` reads a page against, so a page given as a path reads too. */
-const PAGE_BASE = 'https://page.invalid';
+const PAGE_BASE = "https://page.invalid";
 /** The most times the collector decodes a segment, so an address escaped twice, as `%2540`, still shows. */
 const MAX_DECODING_PASSES = 2;
 /** The at sign and its look-alikes U+FF20 and U+FE6B. */
@@ -45,7 +45,7 @@ export function pagePath(page: string): string | undefined {
   } catch {
     return undefined;
   }
-  return path.startsWith('/') ? cut(withoutAddresses(path)) : undefined;
+  return path.startsWith("/") ? cut(withoutAddresses(path)) : undefined;
 }
 
 /** Returns the path cut to 256 characters, never inside an escape or inside the escapes of one UTF-8 character. */
@@ -53,8 +53,8 @@ function cut(path: string): string {
   if (path.length <= MAX_PAGE_LENGTH) {
     return path;
   }
-  const kept = path.slice(0, MAX_PAGE_LENGTH).replace(CUT_ESCAPE, '');
-  const lastCharacter = LAST_ENCODED_CHARACTER.exec(kept)?.[0] ?? '';
+  const kept = path.slice(0, MAX_PAGE_LENGTH).replace(CUT_ESCAPE, "");
+  const lastCharacter = LAST_ENCODED_CHARACTER.exec(kept)?.[0] ?? "";
   return isWholeCharacter(lastCharacter) ? kept : kept.slice(0, kept.length - lastCharacter.length);
 }
 
@@ -80,11 +80,11 @@ export function referrerHost(referrer: string): string | undefined {
   } catch {
     return undefined;
   }
-  const isIp = host.startsWith('[') || /^\d+$/.test(host.slice(host.lastIndexOf('.') + 1));
+  const isIp = host.startsWith("[") || /^\d+$/.test(host.slice(host.lastIndexOf(".") + 1));
   // The check decodes the host, since `URL` leaves an at sign or a look-alike escaped in the host of a scheme other
   // than http or https.
   const isAddress = isIp || AT_SIGN.test(decodedOrSame(host));
-  return host === '' || host.length > MAX_REFERRER_LENGTH || isAddress ? undefined : host;
+  return host === "" || host.length > MAX_REFERRER_LENGTH || isAddress ? undefined : host;
 }
 
 /**
@@ -92,7 +92,7 @@ export function referrerHost(referrer: string): string | undefined {
  * from a segment that starts a URL.
  */
 function withoutAddresses(path: string): string {
-  const segments = path.split('/');
+  const segments = path.split("/");
   const kept: string[] = [];
   let length = 0;
   for (const [index, whole] of segments.entries()) {
@@ -100,16 +100,16 @@ function withoutAddresses(path: string): string {
     if (length > MAX_PAGE_LENGTH) {
       break;
     }
-    const segment = whole.replace(PATH_PARAMETER, '');
+    const segment = whole.replace(PATH_PARAMETER, "");
     const texts = decodings(segment);
     if (startsUrl(texts, segments[index + 1])) {
-      return [...kept, ADDRESS_SEGMENT].join('/');
+      return [...kept, ADDRESS_SEGMENT].join("/");
     }
     const sent = texts.some(holdsAddress) ? ADDRESS_SEGMENT : segment;
     kept.push(sent);
     length += sent.length + 1;
   }
-  return kept.join('/');
+  return kept.join("/");
 }
 
 /**
@@ -117,10 +117,10 @@ function withoutAddresses(path: string): string {
  * or it ends in a scheme's colon before an empty segment.
  */
 function startsUrl(texts: readonly string[], next: string | undefined): boolean {
-  const [written = ''] = texts;
+  const [written = ""] = texts;
   return (
     texts.some((text) => SCHEME_SLASHES.test(text) || SPECIAL_SCHEME.test(text)) ||
-    (next === '' && SCHEME_END.test(written))
+    (next === "" && SCHEME_END.test(written))
   );
 }
 
@@ -150,7 +150,9 @@ function decodedOrSame(text: string): string {
     } catch {
       // The catch decodes the ASCII escapes of a run that is not UTF-8, so an `@` beside a stray byte, as in `%E9%40`,
       // still shows.
-      return run.replaceAll(ASCII_ESCAPE, (escape) => String.fromCodePoint(Number.parseInt(escape.slice(1), 16)));
+      return run.replaceAll(ASCII_ESCAPE, (escape) =>
+        String.fromCodePoint(Number.parseInt(escape.slice(1), 16)),
+      );
     }
   });
 }
@@ -168,5 +170,5 @@ function holdsAddress(text: string): boolean {
  * `::1`.
  */
 function holdsShortIpv6(text: string): boolean {
-  return text.split(NON_WORD).some((word) => word.includes('::') && HEX_AND_COLONS.test(word));
+  return text.split(NON_WORD).some((word) => word.includes("::") && HEX_AND_COLONS.test(word));
 }
