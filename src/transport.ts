@@ -72,8 +72,8 @@ export function transportsOf(options: CollectorOptions): { transport: Transport;
 }
 
 /**
- * Returns the intake's forget address: `endpoint` with `forget` in place of the last segment of its path, the relay's
- * `relay`. A trailing slash goes with that segment. The query stays, since the envelopes go to `endpoint` with it.
+ * Returns the intake's forget address: `endpoint` with `forget` in place of the last segment of its path, which is
+ * `relay`. A trailing slash goes with that segment. The query stays, as on the envelopes' address.
  */
 function forgetUrlOf(endpoint: string): string {
   const url = new URL(endpoint);

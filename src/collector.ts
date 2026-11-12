@@ -38,8 +38,8 @@ export function newCollector(options: CollectorOptions): Collector {
 }
 
 /**
- * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first event
- * of a local day. That event counts the day among the active days.
+ * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first
+ * event of a local day. That event adds the day to the active days.
  */
 export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () => void): Collector {
   const product = checkedBuild(options);
@@ -325,8 +325,8 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   }
 
   /**
-   * Runs at construction. When the storage holds requests, such as the events of a page or a window that closed before
-   * its send, it runs `startOnce`, which settles the stored state before it schedules the send.
+   * Schedules a send at construction when the storage holds requests, such as the events of a page or a window that
+   * closed before its send. It runs `startOnce`, which settles the stored state before it schedules the send.
    */
   async function sendWhatIsLeft(): Promise<void> {
     await lock(async () => {
@@ -346,7 +346,7 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
       }
       const page = pageOf(name);
       await serialize(async () => {
-        // The check and the mark run in the lock, so two calls in quick turn never both pass an open window.
+        // The check and the mark run in the lock, so of two calls in quick turn only the first goes.
         const call = { name, throttleMs: event.throttleMs, now: calledAt };
         if (throttle.isDropped(call)) {
           return false;

@@ -73,7 +73,8 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
-  // The first event of a day changes the uninstall page's fields. The collector queues no event before it is built.
+  // `onNewDay` refreshes the uninstall page, since a day's first event changes its `active_days`. The collector queues
+  // no event before `refreshUninstallPage` is set below.
   let refreshUninstallPage: (() => Promise<void>) | undefined;
   const onNewDay = (): void => void refreshUninstallPage?.();
   const built =
@@ -267,11 +268,10 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
 export type ContentScriptCollector = Pick<Collector, 'track'>;
 
 /**
- * Returns the collector of a content script. Its `track` hands each event to the service worker with `forwardTrack`,
- * and the worker's collector checks, queues and sends it under the user's analytics state. The state lives in the
- * worker and the extension pages, so a content script can neither read nor change it. It reads no storage, needs no
- * key, version or endpoint, and never throws. It applies the `throttleMs` of a call in its own memory, by `clock`,
- * before it forwards the event. It has no `onError`, so it drops a call with a bad `throttleMs` without a report.
+ * Returns the collector of a content script. Its `track` applies a call's `throttleMs` in the script's memory, by
+ * `clock`, then hands the event to the worker with `forwardTrack`. The worker checks, queues and sends it under the
+ * user's analytics state, which a content script can neither read nor change. It reads no storage, needs no key,
+ * version or endpoint, never throws, and drops a call with a bad `throttleMs` without a report, having no `onError`.
  */
 export function newContentScriptCollector({ clock = systemClock }: { clock?: Clock } = {}): ContentScriptCollector {
   const throttle = newThrottle();
@@ -286,7 +286,8 @@ export function newContentScriptCollector({ clock = systemClock }: { clock?: Clo
       if (throttle.isDropped(call)) {
         return;
       }
-      // The window opens for an event the worker takes. The worker alone knows the user's state.
+      // The window opens for an event that passes the worker's check. Only the worker knows the user's state, so an
+      // event the worker drops in the opted_out state opens a window too.
       if (isForwardable(name, params)) {
         throttle.went(call);
       }

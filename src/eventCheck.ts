@@ -37,8 +37,8 @@ const SYSTEM_EVENT_PARAMS: ReadonlyMap<string, Readonly<Record<string, ParamRule
 
 /**
  * Tells why the intake would drop the event, or returns undefined when its form passes. The check refuses `installed`,
- * `updated` and `opted_out`, because only the collector's own methods send them. It never throws: params whose getter
- * or proxy throws are params it could not read.
+ * `updated` and `opted_out`, because only the collector's own methods send them. It never throws: for params whose
+ * getter or proxy throws, it returns that it could not read them.
  */
 export function checkEvent(name: unknown, params: unknown): string | undefined {
   if (typeof name !== 'string' || !NAME_FORMAT.test(name)) {
