@@ -58,8 +58,8 @@ describe("newWebLock", () => {
 
   it.each([
     ["no Web Locks", {}],
-    // This row covers test DOMs such as happy-dom, which set `locks` to null.
-    ["Web Locks set to null", { locks: JSON.parse("null") }],
+    // oxlint-disable-next-line unicorn/no-null -- test DOMs such as happy-dom set `locks` to null.
+    ["Web Locks set to null", { locks: null }],
     ["Web Locks without a request method", { locks: {} }],
   ])("runs the operation unguarded where the host has %s", async (_, host) => {
     vi.stubGlobal("navigator", host);
