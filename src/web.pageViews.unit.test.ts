@@ -263,7 +263,7 @@ describe("newWebCollector page fields", () => {
     await usage.flush();
 
     expect(fetch.events).toEqual([expect.objectContaining({ name: "page_view", page: "/" })]);
-    expect(fetch.events).toEqual([expect.not.objectContaining({ referrer: expect.anything() })]);
+    expect(fetch.events[0]).not.toHaveProperty("referrer");
   });
 
   it("records an event in a Web Worker, which has no document or location, and reports nothing", async () => {
@@ -285,7 +285,8 @@ describe("newWebCollector page fields", () => {
     await usage.track("report_exported");
     await usage.flush();
 
-    expect(fetch.events).toEqual([expect.not.objectContaining({ page: expect.anything() })]);
+    expect(fetch.events).toHaveLength(1);
+    expect(fetch.events[0]).not.toHaveProperty("page");
     expect(errors).toEqual([]);
   });
 

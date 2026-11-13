@@ -52,7 +52,8 @@ describe("the events track takes", () => {
     ],
     ["params that are a list", fromUntypedHost<Record<string, string>>(["a"])],
     ["params that are an empty list", fromUntypedHost<Record<string, string>>([])],
-    ["params that are null", fromUntypedHost<Record<string, string>>(JSON.parse("null"))],
+    // oxlint-disable-next-line unicorn/no-null -- a host outside TypeScript can pass null for params.
+    ["params that are null", fromUntypedHost<Record<string, string>>(null)],
   ])("refuses and reports an event with %s", async (_, params) => {
     const harness = newHarness();
 
@@ -111,7 +112,8 @@ describe("a host outside TypeScript", () => {
     const harness = newHarness({ getId: () => USER_ID });
     const storage: StorageAdapter = {
       get: async (key) =>
-        (await harness.storage.get(key)) ?? fromUntypedHost<undefined>(JSON.parse("null")),
+        // oxlint-disable-next-line unicorn/no-null -- this storage answers null for a missing key, as Web Storage does.
+        (await harness.storage.get(key)) ?? fromUntypedHost<undefined>(null),
       set: (key, value) => harness.storage.set(key, value),
     };
     const collector = harness.restart({ storage });

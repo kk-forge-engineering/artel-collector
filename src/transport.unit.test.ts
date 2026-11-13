@@ -34,7 +34,9 @@ describe("newHttpTransport", () => {
       clock,
       fetch: async (_, init) => {
         await new Promise((_resolve, reject) =>
-          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("This operation was aborted", "AbortError")),
+          ),
         );
         return new Response(undefined, { status: 204 });
       },

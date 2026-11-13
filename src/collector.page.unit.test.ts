@@ -94,12 +94,9 @@ describe("page fields", () => {
       await harness.collector.track("page_view");
       await harness.settle();
 
-      expect(harness.fetch.events).toEqual([
-        expect.not.objectContaining({ page: expect.anything() }),
-      ]);
-      expect(harness.fetch.events).toEqual([
-        expect.not.objectContaining({ referrer: expect.anything() }),
-      ]);
+      expect(harness.fetch.events).toHaveLength(1);
+      expect(harness.fetch.events[0]).not.toHaveProperty("page");
+      expect(harness.fetch.events[0]).not.toHaveProperty("referrer");
       expect(asked).toEqual([]);
     },
   );
@@ -138,9 +135,8 @@ describe("page fields", () => {
     await harness.collector.track("a");
     await harness.settle();
 
-    expect(harness.fetch.events).toEqual([
-      expect.not.objectContaining({ page: expect.anything() }),
-    ]);
+    expect(harness.fetch.events).toHaveLength(1);
+    expect(harness.fetch.events[0]).not.toHaveProperty("page");
     expect(harness.errors).toEqual([new Error("no location")]);
   });
 });
