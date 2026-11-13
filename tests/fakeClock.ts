@@ -1,4 +1,4 @@
-import type { Clock, TimerHandle } from "../src/exports.js";
+import type { Clock } from "../src/exports.js";
 
 interface Timer {
   due: number;
@@ -20,17 +20,13 @@ export class FakeClock implements Clock {
 
   readonly now = (): number => this.current;
 
-  readonly setTimeout = (callback: () => void, delayMs: number): TimerHandle => {
+  readonly setTimeout = (callback: () => void, delayMs: number): (() => void) => {
     this.lastHandle++;
-    this.timers.set(this.lastHandle, { due: this.current + delayMs, callback });
-    // The build uses the dom typings, where a timer handle is a number.
-    return this.lastHandle;
-  };
-
-  readonly clearTimeout = (handle: TimerHandle | undefined): void => {
-    if (handle !== undefined) {
+    const handle = this.lastHandle;
+    this.timers.set(handle, { due: this.current + delayMs, callback });
+    return () => {
       this.timers.delete(handle);
-    }
+    };
   };
 
   /**

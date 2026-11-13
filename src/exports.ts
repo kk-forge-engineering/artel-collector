@@ -22,4 +22,4 @@ export { checkOptions, isTestKey } from "./hostInput.js";
 export { newMemoryStorage, type StorageAdapter } from "./storage.js";
 export { newHttpTransport, type Transport, type TransportResult } from "./transport.js";
 export type { Lock } from "./lock.js";
-export { systemClock, type Clock, type TimerHandle } from "./clock.js";
+export { systemClock, type Clock } from "./clock.js";

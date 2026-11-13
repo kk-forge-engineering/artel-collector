@@ -32,7 +32,7 @@ export function newHttpTransport(
 ): Transport {
   return async (body) => {
     const timeout = new AbortController();
-    const timer = clock.setTimeout(() => timeout.abort(), TIMEOUT_MS);
+    const cancelTimeout = clock.setTimeout(() => timeout.abort(), TIMEOUT_MS);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -52,7 +52,7 @@ export function newHttpTransport(
     } catch {
       return { status: 0 };
     } finally {
-      clock.clearTimeout(timer);
+      cancelTimeout();
     }
   };
 }
