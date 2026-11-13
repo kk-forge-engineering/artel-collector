@@ -1,6 +1,6 @@
 {
   "name": "@kk-forge/artel-collector",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Sends a product's analytics events to the intake service",
   "license": "MIT",
   "author": "KK Forge",
@@ -45,7 +45,7 @@
     "build": "node --eval \"process.getBuiltinModule('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "lint": "npm run lint:tsc && npm run lint:oxlint && npm run lint:format",
     "lint:fix": "npm run lint:oxlint:fix && npm run lint:format:fix",
-    "lint:tsc": "tsc",
+    "lint:tsc": "tsc && tsc -p tsconfig.dom.json && tsc -p tsconfig.node.json",
     "lint:oxlint": "oxlint src tests",
     "lint:oxlint:fix": "oxlint --fix src tests",
     "lint:format": "oxfmt --check .",
@@ -56,6 +56,7 @@
   },
   "devDependencies": {
     "@kk-forge/oxlint-config": "^4.0.0",
+    "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.0.5",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.90.0",

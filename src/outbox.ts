@@ -1,4 +1,4 @@
-import type { Clock, TimerHandle } from "./clock.js";
+import type { Clock } from "./clock.js";
 import { daysBetween, parseDay, utcDateAt, type CalendarDate } from "./calendar.js";
 import type { Envelope, UsageEvent } from "./envelope.js";
 import { isTestKey, isUsableId, quoted } from "./hostInput.js";
@@ -110,9 +110,10 @@ export function newOutbox({
   const queue = newQueue({ storage, reportError });
   /** Names this outbox's leases, apart from those of other contexts that share the storage. */
   const holder = newRandomId();
-  let sendTimer: TimerHandle | undefined;
+  let cancelSendTimer: (() => void) | undefined;
   let sendDue = Number.POSITIVE_INFINITY;
-  let retryTimer: TimerHandle | undefined;
+  /** Cancels the timer of the pending retry. Set only while a retry is pending. */
+  let cancelRetryTimer: (() => void) | undefined;
   let retryDelay = RETRY_DELAY_MS;
   /** Chains the sends, so that one runs at a time and queued envelopes leave in the order they were made. */
   let sending: Promise<void> = Promise.resolve();
@@ -128,25 +129,26 @@ export function newOutbox({
   }
 
   function cancelSend(): void {
-    clock.clearTimeout(sendTimer);
+    cancelSendTimer?.();
+    cancelSendTimer = undefined;
     sendDue = Number.POSITIVE_INFINITY;
   }
 
   function cancelRetry(): void {
-    clock.clearTimeout(retryTimer);
-    retryTimer = undefined;
+    cancelRetryTimer?.();
+    cancelRetryTimer = undefined;
   }
 
   /** Starts a send within `delayMs`, unless a send is due sooner or a retry is pending. */
   function sendWithin(delayMs: number): void {
     // The pending retry carries the new events too. An earlier send would reach an intake that asked the outbox to
     // wait.
-    if (retryTimer !== undefined || sendDue <= clock.now() + delayMs) {
+    if (cancelRetryTimer !== undefined || sendDue <= clock.now() + delayMs) {
       return;
     }
-    clock.clearTimeout(sendTimer);
+    cancelSendTimer?.();
     sendDue = clock.now() + delayMs;
-    sendTimer = clock.setTimeout(() => void sendUnlessRetryPending(), delayMs);
+    cancelSendTimer = clock.setTimeout(() => void sendUnlessRetryPending(), delayMs);
   }
 
   /** Sends at once, cancelling a pending retry, as `flush` and a retry timer do. */
@@ -164,7 +166,7 @@ export function newOutbox({
   function sendUnlessRetryPending(): Promise<void> {
     cancelSend();
     sending = sending
-      .then(async () => (retryTimer === undefined ? sendLeased() : undefined))
+      .then(async () => (cancelRetryTimer === undefined ? sendLeased() : undefined))
       .catch(reportError);
     return sending;
   }
@@ -256,7 +258,7 @@ export function newOutbox({
     cancelSend();
     cancelRetry();
     const waitMs = Math.min(Math.max(retryDelay, askedWaitMs ?? 0), MAX_RETRY_DELAY_MS);
-    retryTimer = clock.setTimeout(() => void send(), waitMs);
+    cancelRetryTimer = clock.setTimeout(() => void send(), waitMs);
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
     await lock(async () => keepRetryWait(waitMs));
   }
@@ -417,9 +419,9 @@ async function answerOf(
   body: string,
   clock: Clock,
 ): Promise<{ status: number; retryAfter?: string | undefined }> {
-  let timer: TimerHandle | undefined;
+  let cancelLate: (() => void) | undefined;
   const late = new Promise<TransportResult>((resolve) => {
-    timer = clock.setTimeout(() => resolve({ status: 0 }), TRANSPORT_LIMIT_MS);
+    cancelLate = clock.setTimeout(() => resolve({ status: 0 }), TRANSPORT_LIMIT_MS);
   });
   try {
     const answer = await Promise.race([transport(body), late]);
@@ -430,7 +432,7 @@ async function answerOf(
   } catch {
     return { status: 0 };
   } finally {
-    clock.clearTimeout(timer);
+    cancelLate?.();
   }
 }
 

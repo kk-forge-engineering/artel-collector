@@ -1,0 +1,6 @@
+{
+  // A product's fake clock must type-check with the Node typings alone, where a timer handle is an object.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["es2022"], "types": ["node"] },
+  "include": ["tests/fakeClock.ts"]
+}

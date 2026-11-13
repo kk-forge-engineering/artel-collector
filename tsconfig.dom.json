@@ -1,0 +1,6 @@
+{
+  // A product's fake clock must type-check with the DOM typings alone, where a timer handle is a number.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["es2022", "dom"], "types": [] },
+  "include": ["tests/fakeClock.ts"]
+}

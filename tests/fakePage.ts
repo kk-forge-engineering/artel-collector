@@ -15,9 +15,9 @@ export class FakePage {
   };
   readonly document = new FakeDocument("https://www.google.com/search?q=editor");
   readonly window = new EventTarget();
-  readonly history = {
-    pushState: ((_data, _unused, url) => this.moveTo(url)) as HistoryCall,
-    replaceState: ((_data, _unused, url) => this.moveTo(url)) as HistoryCall,
+  readonly history: { pushState: HistoryCall; replaceState: HistoryCall } = {
+    pushState: (_data, _unused, url) => this.moveTo(url),
+    replaceState: (_data, _unused, url) => this.moveTo(url),
   };
 
   /** Goes back to `path`, as the back button does. */

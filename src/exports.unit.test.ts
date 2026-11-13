@@ -17,7 +17,6 @@ import type {
   NavigatorFields,
   PageFields,
   StorageAdapter,
-  TimerHandle,
   TrackOptions,
   Transport,
   TransportResult,
@@ -100,7 +99,6 @@ describe("the public API", () => {
         RecordedEvent,
         RecordingCollector,
         StorageAdapter,
-        TimerHandle,
         Transport,
         TransportResult,
         UninstallParams,
@@ -389,6 +387,15 @@ describe("the public API", () => {
     ).toEqualTypeOf<extension.ContentScriptCollector>();
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty("setState");
     expectTypeOf(extension.newContentScriptCollector()).not.toHaveProperty("getState");
+  });
+
+  it("gives a clock that owns its timers, with no handle whose type depends on the host", () => {
+    // `Clock.setTimeout` returns a cancel function, not a timer handle. A timer handle is a number in the DOM typings and
+    // an object in the Node typings, and a fake clock in a product's tests sees the Node ones. A cancel fits both.
+    expectTypeOf<Clock>().toEqualTypeOf<{
+      now(): number;
+      setTimeout(callback: () => void, delayMs: number): () => void;
+    }>();
   });
 
   it("gives every track, a content script's included, the options of a throttle", () => {
