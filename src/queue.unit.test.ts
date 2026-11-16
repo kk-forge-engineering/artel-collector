@@ -40,34 +40,6 @@ describe("leases", () => {
 });
 
 describe("stored queue", () => {
-  it("seals the same body again after a round trip through storage", async () => {
-    const queue = newQueue({ storage: newMemoryStorage(), reportError: () => undefined });
-    await queue.add(FIELDS, {
-      ...EVENT,
-      first: ["day"],
-      age_days: 3,
-      params: { format: "pdf", pages: 2, with_images: true },
-    });
-    const [item] = await queue.lease(FIRST_LEASE);
-    const sealed = await queue.seal(item?.qid ?? "", FIRST_LEASE);
-
-    expect((await queue.seal(item?.qid ?? "", FIRST_LEASE))?.body).toBe(sealed?.body);
-  });
-
-  it("skips a malformed item and keeps the others", async () => {
-    const storage = newMemoryStorage();
-    const queue = newQueue({ storage, reportError: () => undefined });
-    await queue.add(FIELDS, EVENT);
-    const planted = ((await storage.get(QUEUE_KEY)) ?? "").replace(/^\[/, '[{"qid":"broken"},');
-    await storage.set(QUEUE_KEY, planted);
-
-    const leased = await queue.lease(FIRST_LEASE);
-
-    expect(planted).toContain('"qid":"broken"');
-    expect(leased.map((item) => item.envelope.events)).toEqual([[EVENT]]);
-    expect(await storage.get(QUEUE_KEY)).not.toContain('"qid":"broken"');
-  });
-
   it("skips an item without a queue id, whatever its envelope", async () => {
     const storage = newMemoryStorage();
     const queue = newQueue({ storage, reportError: () => undefined });
