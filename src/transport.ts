@@ -1,4 +1,4 @@
-import { systemClock, type Clock } from "./clock.js";
+import type { Clock } from "./clock.js";
 import type { CollectorOptions } from "./collectorTypes.js";
 
 /** What the intake answered: its HTTP status, 0 when the request did not reach it, and its `Retry-After` header. */
@@ -15,20 +15,18 @@ export interface TransportResult {
  */
 export type Transport = (body: string) => Promise<number | TransportResult>;
 
+/** The `fetch` a transport posts with. */
+export type Fetch = typeof globalThis.fetch;
+
 const TIMEOUT_MS = 30_000;
 
 /**
- * Returns a transport that posts each body to `endpoint` with `fetch`, the host's own by default. The transport
- * resolves to the status and the raw `Retry-After` header, or to status 0 when a request fails or takes over 30
- * seconds.
+ * Returns a transport that posts each body to `endpoint` with `fetch`. The transport resolves to the status and the raw
+ * `Retry-After` header, or to status 0 when a request fails or takes over 30 seconds.
  */
-export function newHttpTransport(
+export function newFetchTransport(
   endpoint: string,
-  {
-    // The default calls `fetch` through its global. A browser refuses a `fetch` called apart from its global.
-    fetch = (input, init) => globalThis.fetch(input, init),
-    clock = systemClock,
-  }: { fetch?: typeof globalThis.fetch; clock?: Clock } = {},
+  { fetch, clock }: { fetch: Fetch; clock: Clock },
 ): Transport {
   return async (body) => {
     const timeout = new AbortController();
@@ -61,7 +59,10 @@ export function newHttpTransport(
  * Returns the transport of the envelopes and that of the forget requests. A product's own transport takes both kinds
  * of request.
  */
-export function transportsOf(options: CollectorOptions): {
+export function transportsOf(
+  options: CollectorOptions,
+  newTransport: (endpoint: string) => Transport,
+): {
   transport: Transport;
   forgetTransport: Transport;
 } {
@@ -69,8 +70,8 @@ export function transportsOf(options: CollectorOptions): {
     return { transport: options.transport, forgetTransport: options.transport };
   }
   return {
-    transport: newHttpTransport(options.endpoint),
-    forgetTransport: newHttpTransport(forgetUrlOf(options.endpoint)),
+    transport: newTransport(options.endpoint),
+    forgetTransport: newTransport(forgetUrlOf(options.endpoint)),
   };
 }
 

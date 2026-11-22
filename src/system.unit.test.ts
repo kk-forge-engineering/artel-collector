@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { systemClock } from "./exports.js";
+import { systemRandom } from "./system.js";
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -30,5 +31,13 @@ describe("the system clock", () => {
       cancel();
       cancel();
     }).not.toThrow();
+  });
+});
+
+describe("the system random bytes", () => {
+  it("gives as many bytes as asked, and different ones each call", () => {
+    const first = systemRandom.bytes(16);
+    expect(first).toHaveLength(16);
+    expect(systemRandom.bytes(16)).not.toEqual(first);
   });
 });

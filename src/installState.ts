@@ -7,7 +7,7 @@ import {
   type CalendarDate,
 } from "./calendar.js";
 import { LifecycleEvent, type Envelope, type UsageEvent } from "./envelope.js";
-import { newRandomId } from "./queue.js";
+import { newRandomId, type Random } from "./random.js";
 import type { StorageAdapter } from "./storage.js";
 
 const SESSION_ID_LENGTH = 12;
@@ -99,10 +99,13 @@ interface InstallState {
 export function newInstallState({
   storage,
   sessionIdleMs,
+  random,
 }: {
   storage: StorageAdapter;
   /** Time without events that ends a session. */
   sessionIdleMs: number;
+  /** Makes the session and install ids. */
+  random: Random;
 }): InstallState {
   async function installDayOr(today: CalendarDate): Promise<CalendarDate> {
     const stored = parseDay(await storage.get(StorageKey.InstallDay));
@@ -193,7 +196,7 @@ export function newInstallState({
     const lastSeen = Number(await storage.get(StorageKey.SessionSeen));
     const isIdle = !(timestamp - lastSeen < sessionIdleMs);
     const session =
-      stored === undefined || stored === "" || isIdle || isNewDay ? newSessionId() : stored;
+      stored === undefined || stored === "" || isIdle || isNewDay ? newSessionId(random) : stored;
     await storage.set(StorageKey.Session, session);
     await storage.set(StorageKey.SessionSeen, String(timestamp));
     return session;
@@ -216,7 +219,7 @@ export function newInstallState({
       if (stored !== undefined && INSTALL_ID_FORMAT.test(stored)) {
         return stored;
       }
-      const id = newRandomId(INSTALL_ID_BYTES);
+      const id = newRandomId(random, INSTALL_ID_BYTES);
       await storage.set(StorageKey.InstallId, id);
       return id;
     },
@@ -281,8 +284,8 @@ export function newInstallState({
   };
 }
 
-function newSessionId(): string {
+function newSessionId(random: Random): string {
   const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
-  const bytes = crypto.getRandomValues(new Uint8Array(SESSION_ID_LENGTH));
+  const bytes = random.bytes(SESSION_ID_LENGTH);
   return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }

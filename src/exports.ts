@@ -1,5 +1,5 @@
 export { detectBrowser, BrowserName, type Browser, type NavigatorFields } from "./browser.js";
-export { newCollector } from "./collector.js";
+export { newCollector, newHttpTransport } from "./systemCollector.js";
 export {
   ActiveDaysBucket,
   AnalyticsState,
@@ -20,6 +20,7 @@ export { Platform, type EventParams } from "./envelope.js";
 export { checkEvent } from "./eventCheck.js";
 export { checkOptions, isTestKey } from "./hostInput.js";
 export { newMemoryStorage, type StorageAdapter } from "./storage.js";
-export { newHttpTransport, type Transport, type TransportResult } from "./transport.js";
+export type { Transport, TransportResult } from "./transport.js";
 export type { Lock } from "./lock.js";
-export { systemClock, type Clock } from "./clock.js";
+export type { Clock } from "./clock.js";
+export { systemClock } from "./system.js";
