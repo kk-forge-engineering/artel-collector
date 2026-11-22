@@ -1,4 +1,5 @@
 import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from "./envelope.js";
+import { newRandomId, type Random } from "./random.js";
 import type { StorageAdapter } from "./storage.js";
 
 export const QUEUE_KEY = "queue";
@@ -109,9 +110,12 @@ interface Queue {
 /** Returns a queue in `storage`. The caller holds a lock around each call. */
 export function newQueue({
   storage,
+  random,
   reportError,
 }: {
   storage: StorageAdapter;
+  /** Makes the queue ids. */
+  random: Random;
   reportError: (error: unknown) => void;
 }): Queue {
   /**
@@ -205,7 +209,7 @@ export function newQueue({
     add: async (fields, event, { awaitsId = false } = {}) => {
       const isOptOut = event.name === LifecycleEvent.OptedOut;
       const newItem = (): QueuedEnvelope => ({
-        qid: newRandomId(),
+        qid: newRandomId(random),
         ...(awaitsId && { awaitsId: true }),
         ...(isOptOut && { isOptOut: true }),
         envelope: { ...fields, events: [event] },
@@ -359,12 +363,6 @@ function bodyOf({ qid, envelope }: QueuedEnvelope): string {
 function fits(envelope: Envelope, event: UsageEvent): boolean {
   const withEvent = { ...envelope, events: [...envelope.events, event] };
   return new TextEncoder().encode(JSON.stringify(withEvent)).length <= MAX_ENVELOPE_BYTES;
-}
-
-/** Returns `byteCount` random bytes, 8 by default, as lowercase hex. */
-export function newRandomId(byteCount = 8): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(byteCount));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function isQueuedEnvelope(value: unknown): value is QueuedEnvelope {

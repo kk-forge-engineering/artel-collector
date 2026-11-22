@@ -1,4 +1,4 @@
-import { newCollector } from "./collector.js";
+import { newCollector } from "./systemCollector.js";
 import type { Collector, CommonOptions, Delivery, Mode, ModeOptions } from "./collectorTypes.js";
 import type { Platform } from "./envelope.js";
 import type { StorageAdapter } from "./storage.js";

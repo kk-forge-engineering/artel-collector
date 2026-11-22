@@ -1,6 +1,8 @@
 import { detectBrowser } from "./browser.js";
-import { systemClock, type Clock } from "./clock.js";
-import { newCollectorNotingDays, sendDelayMsOf } from "./collector.js";
+import type { Clock } from "./clock.js";
+import { systemClock } from "./system.js";
+import { sendDelayMsOf } from "./collector.js";
+import { newCollectorNotingDays } from "./systemCollector.js";
 import {
   AnalyticsState,
   Mode,

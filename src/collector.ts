@@ -18,7 +18,7 @@ import {
   reportTo,
   usableId,
 } from "./hostInput.js";
-import { systemClock } from "./clock.js";
+import type { Clock } from "./clock.js";
 import { newChannelStorage } from "./storage.js";
 import { AnalyticsState, Mode, type Collector, type CollectorOptions } from "./collectorTypes.js";
 import { acceptedEvent } from "./eventCheck.js";
@@ -34,32 +34,40 @@ import {
   isAnalyticsState,
   type StateFields,
 } from "./stateFields.js";
+import type { Random } from "./random.js";
 import { newThrottle } from "./throttle.js";
-import { transportsOf } from "./transport.js";
+import { transportsOf, type Transport } from "./transport.js";
 
 const SESSION_IDLE_MINUTES = 10;
 const SEND_DELAY_SECONDS = 5;
 
-/**
- * Returns a collector. Throws a `TypeError` that names the option for options that would make the intake refuse every
- * envelope, such as a bad key, version or endpoint, and for options only a host outside TypeScript passes. A language
- * that breaks the intake's format is left out and goes to `onError`, since it often comes from the browser.
- */
-export function newCollector<M extends Mode>(options: CollectorOptions & { mode: M }): Collector<M>;
-export function newCollector(options: CollectorOptions): Collector {
-  return newCollectorNotingDays(options, () => undefined);
+/** What the collector reads from its host: the time and timers, random bytes, and a transport to an address. */
+export interface Host {
+  clock: Clock;
+  random: Random;
+  /** Returns the transport that posts to `endpoint`, for a product that passes `endpoint` and no `transport`. */
+  newTransport: (endpoint: string) => Transport;
 }
 
 /**
- * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first
- * event of a local day. That event adds the day to the active days.
+ * Returns a collector that throws as `newCollector` in `src/systemCollector.ts` describes. It calls `onNewDay` inside
+ * its lock each time it queues the first event of a local day, which adds the day to the active days. It ignores
+ * `options.clock`, so the caller puts that clock into `host`.
  */
-export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () => void): Collector {
+export function newCollectorOn({
+  host,
+  options,
+  onNewDay,
+}: {
+  host: Host;
+  options: CollectorOptions;
+  onNewDay: () => void;
+}): Collector {
   const product = checkedBuild(options);
   const { mode } = options;
-  const transports = transportsOf(options);
+  const { clock, random } = host;
+  const transports = transportsOf(options, host.newTransport);
   const storage = newChannelStorage(newStringStorage(options.storage), options.key);
-  const clock = options.clock ?? systemClock;
   const reportError = (error: unknown): void => reportTo(options.onError, error);
   const lock = exclusive(options.lock);
   const getId = options.mode === Mode.Identified ? usableId(options.getId, reportError) : undefined;
@@ -80,6 +88,7 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
   const install = newInstallState({
     storage,
     sessionIdleMs: durationOr(options.sessionIdleMinutes, SESSION_IDLE_MINUTES) * 60_000,
+    random,
   });
   const outbox = newOutbox({
     key: options.key,
@@ -92,6 +101,7 @@ export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () =
     giveBack: (items) => giveBack(items),
     sendDelayMs: sendDelayMsOf(options),
     clock,
+    random,
     reportError,
   });
 

@@ -9,11 +9,3 @@ export interface Clock {
   /** Runs `callback` after `delayMs` and returns the function that cancels it. A cancel after the run does nothing. */
   setTimeout(callback: () => void, delayMs: number): () => void;
 }
-
-export const systemClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (callback, delayMs) => {
-    const handle = setTimeout(callback, delayMs);
-    return () => clearTimeout(handle);
-  },
-};

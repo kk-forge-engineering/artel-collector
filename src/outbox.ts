@@ -5,12 +5,12 @@ import { isTestKey, isUsableId, quoted } from "./hostInput.js";
 import type { Lock } from "./lock.js";
 import {
   newQueue,
-  newRandomId,
   type Identity,
   type LeaseTerms,
   type QueuedEnvelope,
   type SealedEnvelope,
 } from "./queue.js";
+import { newRandomId, type Random } from "./random.js";
 import type { StorageAdapter } from "./storage.js";
 import type { Transport, TransportResult } from "./transport.js";
 
@@ -19,7 +19,7 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
 /** Names the stored time, in epoch milliseconds, before which no context that shares the storage starts a send. */
 const RETRY_AT_KEY = "retry_at";
 /**
- * The time one send holds the lease on a queued envelope, twice the 30 s request limit of `newHttpTransport` in
+ * The time one send holds the lease on a queued envelope, twice the 30 s request limit of `newFetchTransport` in
  * `src/transport.ts`. The send renews the lease before each request. A host that stops mid-send blocks the envelope
  * only until its lease ends.
  */
@@ -84,6 +84,7 @@ export function newOutbox({
   giveBack,
   sendDelayMs,
   clock,
+  random,
   reportError,
 }: {
   /** The channel key, which a forget request names. */
@@ -105,11 +106,13 @@ export function newOutbox({
    */
   giveBack: (items: readonly QueuedEnvelope[]) => Promise<void>;
   clock: Clock;
+  /** Makes the queue ids and names this outbox's leases. */
+  random: Random;
   reportError: (error: unknown) => void;
 }): Outbox {
-  const queue = newQueue({ storage, reportError });
+  const queue = newQueue({ storage, random, reportError });
   /** Names this outbox's leases, apart from those of other contexts that share the storage. */
-  const holder = newRandomId();
+  const holder = newRandomId(random);
   let cancelSendTimer: (() => void) | undefined;
   let sendDue = Number.POSITIVE_INFINITY;
   /** Cancels the timer of the pending retry. Set only while a retry is pending. */

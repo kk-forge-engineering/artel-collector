@@ -1,5 +1,5 @@
 import { detectBrowser } from "./browser.js";
-import { newCollector } from "./collector.js";
+import { newCollector } from "./systemCollector.js";
 import {
   Mode,
   type Collector,

@@ -1,4 +1,5 @@
-import { systemClock, type Clock } from "./clock.js";
+import type { Clock } from "./clock.js";
+import { systemClock } from "./system.js";
 import { AnalyticsState, Mode, type Collector } from "./collectorTypes.js";
 import type { EventParams } from "./envelope.js";
 import { acceptedEvent } from "./eventCheck.js";
