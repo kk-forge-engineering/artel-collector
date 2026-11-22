@@ -80,7 +80,7 @@ The collectors do the rest themselves:
 - An extension collector with `uninstallPage` keeps Chrome's uninstall page up to date with the user's state.
 - A desktop window sends `installed` and `updated` when they are due.
 
-`newWebCollector` comes from `@kk-forge/artel-collector/web`, `newExtensionCollector` and `newContentScriptCollector` from `@kk-forge/artel-collector/extension`, `newDesktopCollector` from `@kk-forge/artel-collector/desktop`, and `newCollector` from the main module. Each platform constructor fills in the defaults in the table below and passes the result to `newCollector`. The web and extension constructors set `platform`, and the desktop one takes it. An option left out or `undefined` takes its default. Each constructor takes `mode` as the literal `'anonymous'`, `'pseudonymous'` or `'identified'`, and returns a collector whose `setState` takes only that channel's states. A `mode` known only at run time goes in options typed `CollectorOptions`, `WebCollectorOptions`, `ExtensionCollectorOptions` or `DesktopCollectorOptions` and built per mode, and gives a collector whose `setState` takes every state. `newContentScriptCollector` takes no channel options, as "`@kk-forge/artel-collector/extension`" describes.
+`newWebCollector`, `newDesktopCollector` and `newCollector` come from `@kk-forge/artel-collector/infra`, and `newExtensionCollector` and `newContentScriptCollector` from `@kk-forge/artel-collector/infra/chrome`, as "Entry points" describes. Each platform constructor fills in the defaults in the table below and passes the result to `newCollector`. The web and extension constructors set `platform`, and the desktop one takes it. An option left out or `undefined` takes its default. Each constructor takes `mode` as the literal `'anonymous'`, `'pseudonymous'` or `'identified'`, and returns a collector whose `setState` takes only that channel's states. A `mode` known only at run time goes in options typed `CollectorOptions`, `WebCollectorOptions`, `ExtensionCollectorOptions` or `DesktopCollectorOptions` and built per mode, and gives a collector whose `setState` takes every state. `newContentScriptCollector` takes no channel options, as "Chrome extension" describes.
 
 Each constructor throws a `TypeError` that names the option when the options would make the intake refuse every envelope. A mistake in the build then fails its first run and its tests. That is a `key`, `platform` or `version` the intake does not take, an `endpoint` that is not `https`, or a `transport` that is not a function, as "Options" describes. It also throws for a `browser` on a desktop platform, which only untyped code passes and whose envelopes the intake refuses. The message never quotes the endpoint, so it carries no password. `newWebCollector`, `newExtensionCollector` and `newDesktopCollector` also throw where `navigator` is missing, unless the options pass `browserLanguage`. Node 21.2 and later define `navigator.language`, so server rendering there builds a collector with the server's language. `newExtensionCollector` also throws outside an extension context unless the options pass `version`. `newContentScriptCollector` never throws. A `browserLanguage` or `uiLanguage` that breaks the format throws nothing: the collector leaves it out and reports it to `onError`, since it often comes from the browser.
 
@@ -176,7 +176,7 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
 `detectBrowser(nav)` names the browser from the `userAgentData.brands` and `userAgent` of the `navigator` it is given. It returns `{ name, major }`, where `name` is `chrome`, `edge`, `opera`, `yandex`, `brave`, `firefox` or `safari`, and leaves out a major version outside 1 to 999. Any other browser is `{ name: 'other' }`. Chrome is named only by its brands, since every Chromium browser carries Chrome's User-Agent token. It returns `undefined` when `nav` has neither a Chromium brand nor a User-Agent.
 
-The main module also exports the checks of "Testing", `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`, `newMemoryStorage()`, `systemClock`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `WebCollectorOptions`, `ExtensionCollectorOptions` and `DesktopCollectorOptions` come from their own modules.
+`@kk-forge/artel-collector` also exports the checks of "Testing", `newMemoryStorage()`, `Mode`, `AnalyticsState`, `Platform`, `ActiveDaysBucket` and `BrowserName`, and the types of every option, method and value above. `@kk-forge/artel-collector/infra` also exports `systemClock`, `WebCollectorOptions`, `DesktopCollectorOptions` and `newHttpTransport(endpoint, { fetch, clock }?)`, the transport behind `endpoint`. `@kk-forge/artel-collector/infra/chrome` also exports `ExtensionCollectorOptions` and `ContentScriptCollector`.
 
 ## Sending
 
@@ -200,15 +200,24 @@ The marks an event takes go back when the collector drops it before any request 
 
 A `get` or `set` that fails goes to `onError`, and the method that called it stops there. A `set` that fails while an event is recorded loses the event, and the event gives back its marks.
 
-`newMemoryStorage()` keeps the state only while the page or worker lives. The platform modules below bring adapters over `localStorage` and `chrome.storage.local`.
+`newMemoryStorage()` keeps the state only while the page or worker lives. `@kk-forge/artel-collector/infra` brings an adapter over `localStorage`, and `@kk-forge/artel-collector/infra/chrome` one over `chrome.storage.local`.
 
-## Platform modules
+## Entry points
 
-The core touches no platform API. Three optional modules hold the code a website, an extension or a desktop app would otherwise write for itself.
+The package publishes one entry point for each layer of its code:
 
-### `@kk-forge/artel-collector/web`
+| Entry point                              | Holds                                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `@kk-forge/artel-collector`              | what reads no host: the types, the enums, `detectBrowser`, the checks of "Testing" and `newMemoryStorage()`                    |
+| `@kk-forge/artel-collector/infra`        | what reads the host: `newCollector`, `newHttpTransport`, `systemClock`, and the code of "Website or web app" and "Desktop app" |
+| `@kk-forge/artel-collector/infra/chrome` | the code of "Chrome extension", the only code of the package that calls `chrome`                                               |
+| `@kk-forge/artel-collector/testing`      | the helpers of "Testing"                                                                                                       |
 
-For a website or a web app. The desktop module builds on its storage and lock.
+An extension imports `infra/chrome` only in its entrypoints, the scripts that start its service worker, its pages and its content scripts.
+
+### Website or web app
+
+`@kk-forge/artel-collector/infra` exports the code for a website or a web app. The desktop collector uses the same storage adapter and lock.
 
 - `newWebCollector(options)` makes a collector for a website or a web app, as in "Usage".
 - `newLocalStorageAdapter()` returns a `storage` over `localStorage`. Every script of the origin can read it, the queued events with their `id`, the last id and the install id included, and no other storage of the origin hides them from its scripts. A site that runs untrusted scripts uses an anonymous channel.
@@ -221,15 +230,15 @@ For a website or a web app. The desktop module builds on its storage and lock.
 A site sets up page views in two lines:
 
 ```ts
-import { newWebCollector, trackPageViews } from "@kk-forge/artel-collector/web";
+import { newWebCollector, trackPageViews } from "@kk-forge/artel-collector/infra";
 
 const analytics = newWebCollector({ key, version, endpoint, mode: "anonymous" });
 trackPageViews(analytics);
 ```
 
-### `@kk-forge/artel-collector/extension`
+### Chrome extension
 
-For a Chrome extension. Its service worker and its pages each make a collector with `newExtensionCollector`. They share `chrome.storage.local` and Web Locks, so they keep one queue and one state.
+`@kk-forge/artel-collector/infra/chrome` exports the code for a Chrome extension. The extension's service worker and its pages each make a collector with `newExtensionCollector`. They share `chrome.storage.local` and Web Locks, so they keep one queue and one state.
 
 - `newExtensionCollector(options)` makes a collector for the service worker or a page, as in "Usage". It needs the `storage` permission. In the service worker it closes `chrome.storage.local` to content scripts with `setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })`, since a content script that could write the user's analytics state, the queue and the last id `getId` gave could send events the user refused. The collector reads and writes no storage until Chrome answers the call, and a failure of the call goes to `onError`. The call runs only in the service worker, so build the collector at the top level of the worker: until it runs, content scripts keep access to `chrome.storage.local`. The call closes the whole `chrome.storage.local` area, every key and not only the collector's, even when the product passes its own `storage`. So a content script of the product that reads its own settings there must get them from the worker instead. `setAccessLevel` needs Chrome 102 or later. The collector calls it again on each start of the service worker.
 - `newChromeStorageAdapter()` returns a `storage` over `chrome.storage.local`.
@@ -241,7 +250,7 @@ For a Chrome extension. Its service worker and its pages each make a collector w
 
 ```ts
 // service worker
-import { newExtensionCollector } from "@kk-forge/artel-collector/extension";
+import { newExtensionCollector } from "@kk-forge/artel-collector/infra/chrome";
 
 const analytics = newExtensionCollector({
   key,
@@ -251,15 +260,15 @@ const analytics = newExtensionCollector({
 });
 
 // content script
-import { newContentScriptCollector } from "@kk-forge/artel-collector/extension";
+import { newContentScriptCollector } from "@kk-forge/artel-collector/infra/chrome";
 
 const analytics = newContentScriptCollector();
 void analytics.track("link_shared", { target: "clipboard" });
 ```
 
-### `@kk-forge/artel-collector/desktop`
+### Desktop app
 
-For a window of a desktop app, such as a Tauri webview.
+`@kk-forge/artel-collector/infra` exports the code for a window of a desktop app, such as a Tauri webview.
 
 - `newDesktopCollector(options)` makes a collector for a desktop window, as in "Usage". It takes `platform` as `'macos'`, `'windows'` or `'linux'`, the platforms a `desktop` channel takes. Its windows share the webview's `localStorage` through `newLocalStorageAdapter()` and its Web Locks through `newWebLock()`, so they keep one queue and one state. It sends `installed` and `updated` when it is built, each only when due, so every window may build one. Events of the last seconds before the app closes go at its next launch, as "Sending" describes. It names no browser and sends no page.
 
@@ -328,7 +337,7 @@ The core reads no page, URL or user input. `params`, the account `id` and the pa
 - `newRecordingCollector(mode?, { onError, clock }?)` returns a `Collector` that sends nothing and records each event it takes in `events`, as `{ name, params }`. `mode` is the channel mode, `anonymous` by default. The user starts in `anonymous`. It refuses an event `track` refuses, a state above the mode and an id `forget` refuses, with the same report to `onError`, so a test catches a bad event name or param. It records what the real collector sends: `opted_out` once at the opt-out and nothing after it in that state, `installed` once, and `updated` only when neither was recorded before, as for one version. It drops a call by `throttleMs` as `track` does. `clock` times the windows, the system's by default, so a test can pass a fake one. `uninstallParams()` resolves to `undefined`.
 - `queuedEvents(storage, key)` resolves to the `{ name, params }` of the events a real collector of channel `key` holds queued in `storage`, oldest first. It writes nothing, and reads a stored queue that is no JSON list as empty.
 
-The main module exports three checks that read no `chrome`, `navigator` or storage, so a build script or a test can call them:
+`@kk-forge/artel-collector` exports three checks that read no `chrome`, `navigator` or storage, so a build script or a test can call them:
 
 - `checkOptions({ key, version, platform, endpoint })` throws the `TypeError` a constructor throws for these options, and returns otherwise. It takes `transport` in place of `endpoint` too.
 - `isTestKey(key)` tells whether `key` is a channel's test key, `<kind>-test-<10 characters>`.

@@ -1,6 +1,7 @@
 {
   "extends": [
     "./node_modules/@kk-forge/oxlint-config/typescript.json",
+    "./node_modules/@kk-forge/oxlint-config/layers.json",
     "./node_modules/@kk-forge/oxlint-config/vitest.json"
   ]
 }
