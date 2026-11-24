@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { SentEvent } from "../../tests/fakeFetch.js";
+import type { SentEvent } from "#tests/fakeFetch.js";
 import { AnalyticsState } from "./exports.js";
-import { newHarness, storageKey, USER_ID, type Harness } from "../../tests/harness.js";
+import { newHarness, storageKey, USER_ID, type Harness } from "#tests/harness.js";
 
 /** Tracks one event at each local time in turn and returns what the collector sent for each. */
 async function eventsAt(harness: Harness, localTimes: string[]): Promise<SentEvent[]> {

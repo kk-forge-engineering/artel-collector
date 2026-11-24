@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { AnalyticsState, Mode, newMemoryStorage, Platform } from "../shared/exports.js";
 import { newCollector } from "./exports.js";
-import { FakeClock } from "../../tests/fakeClock.js";
-import { FakeFetch } from "../../tests/fakeFetch.js";
+import { FakeClock } from "#tests/fakeClock.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
 import {
   ENDPOINT,
   FORGET_URL,
@@ -11,8 +11,8 @@ import {
   storageKey,
   USER_ID,
   VERSION,
-} from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+} from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 const LAST_ID_KEY = storageKey("last_id");
 

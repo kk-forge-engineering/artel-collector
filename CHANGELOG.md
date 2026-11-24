@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+Nothing a product sees changes. The package lints with `@kk-forge/oxlint-config` 13, and its tests reach their helpers and the source through the `#tests/` and `#/` subpath imports.
+
 ## 0.6.0
 
 The entry points now follow the layers of the package's code. Every export keeps its name and signature, and only the path it is imported from changes.

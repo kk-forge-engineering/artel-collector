@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, type Transport, type TransportResult } from "./exports.js";
-import { eventNamesIn } from "../../tests/fakeFetch.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { eventNamesIn } from "#tests/fakeFetch.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 import {
   attemptStartMs,
   MAX_RETRY_DELAY_MS,
@@ -10,8 +10,8 @@ import {
   RETRY_DELAY_MS,
   SEND_DELAY_MS,
   type Harness,
-} from "../../tests/harness.js";
-import { newSharedLock } from "../../tests/sharedLock.js";
+} from "#tests/harness.js";
+import { newSharedLock } from "#tests/sharedLock.js";
 
 /** One answer of the intake, made at the time of the request. */
 type Answer = (now: number) => number | TransportResult;

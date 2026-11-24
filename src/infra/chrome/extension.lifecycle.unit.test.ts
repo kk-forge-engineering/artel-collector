@@ -13,10 +13,10 @@ import {
   stubChrome,
   stubServiceWorker,
   type FakeChrome,
-} from "../../../tests/fakeChrome.js";
-import { FakeFetch } from "../../../tests/fakeFetch.js";
-import { FakeClock } from "../../../tests/fakeClock.js";
-import { ENDPOINT, KEY, SEND_DELAY_MS } from "../../../tests/harness.js";
+} from "#tests/fakeChrome.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
+import { FakeClock } from "#tests/fakeClock.js";
+import { ENDPOINT, KEY, SEND_DELAY_MS } from "#tests/harness.js";
 
 const UNINSTALL_PAGE = "https://example.com/uninstall?product=demo";
 

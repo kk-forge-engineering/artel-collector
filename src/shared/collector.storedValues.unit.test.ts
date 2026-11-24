@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newHarness, RETRY_AT_KEY } from "../../tests/harness.js";
+import { newHarness, RETRY_AT_KEY } from "#tests/harness.js";
 
 describe("the quote of a planted value in a report", () => {
   it("quotes at most 64 characters of a planted value in a report", async () => {

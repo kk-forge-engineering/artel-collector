@@ -5,8 +5,8 @@ import {
   queuedEvents,
   type RecordingCollector,
 } from "./recordingCollector.js";
-import { KEY, newHarness, QUEUE_KEY } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { KEY, newHarness, QUEUE_KEY } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 describe("newRecordingCollector", () => {
   it("records the events it takes, starting anonymous, and sends nothing", async () => {

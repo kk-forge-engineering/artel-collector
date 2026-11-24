@@ -7,8 +7,8 @@ import {
   Platform,
 } from "../shared/exports.js";
 import { newCollector } from "./exports.js";
-import { ENDPOINT, KEY, VERSION } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { ENDPOINT, KEY, VERSION } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 const OPTIONS = {
   key: KEY,

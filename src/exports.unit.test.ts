@@ -28,7 +28,7 @@ import * as extension from "./infra/chrome/exports.js";
 import type { ExtensionCollectorOptions } from "./infra/chrome/exports.js";
 import * as testing from "./testing/exports.js";
 import type { RecordedEvent, RecordingCollector } from "./testing/exports.js";
-import { USER_ID, SITE_KEY } from "../tests/harness.js";
+import { USER_ID, SITE_KEY } from "#tests/harness.js";
 
 // This suite fails when a change removes or renames an export that README.md documents, or moves it to another entry
 // point of package.json's `exports`. Products build on these names, so such a change needs a breaking release.

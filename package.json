@@ -1,6 +1,6 @@
 {
   "name": "@kk-forge/artel-collector",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Sends a product's analytics events to the intake service",
   "license": "MIT",
   "author": "KK Forge",
@@ -15,6 +15,10 @@
   "sideEffects": false,
   "main": "./dist/shared/exports.js",
   "types": "./dist/shared/exports.d.ts",
+  "imports": {
+    "#/*": "./src/*",
+    "#tests/*": "./tests/*"
+  },
   "exports": {
     ".": {
       "types": "./dist/shared/exports.d.ts",
@@ -51,7 +55,7 @@
     "test:ci": "vitest run --coverage"
   },
   "devDependencies": {
-    "@kk-forge/oxlint-config": "^11.0.0",
+    "@kk-forge/oxlint-config": "^13.0.0",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.0.5",
     "oxfmt": "^0.73.0",

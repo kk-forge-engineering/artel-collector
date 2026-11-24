@@ -6,7 +6,7 @@ import {
   type PageFields,
   type StorageAdapter,
 } from "./exports.js";
-import { newHarness } from "../../tests/harness.js";
+import { newHarness } from "#tests/harness.js";
 
 /** Returns a harness of a site whose `getPage` gives `fields`. */
 function newSiteHarness(fields: PageFields, state?: AnalyticsState): ReturnType<typeof newHarness> {

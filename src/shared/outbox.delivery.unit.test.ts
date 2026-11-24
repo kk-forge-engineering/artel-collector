@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, type Collector } from "./exports.js";
-import { eventNamesIn } from "../../tests/fakeFetch.js";
-import { newSharedLock } from "../../tests/sharedLock.js";
+import { eventNamesIn } from "#tests/fakeFetch.js";
+import { newSharedLock } from "#tests/sharedLock.js";
 import {
   KEY,
   QUEUE_KEY,
@@ -12,7 +12,7 @@ import {
   newHarness,
   type Harness,
   USER_ID,
-} from "../../tests/harness.js";
+} from "#tests/harness.js";
 
 /**
  * Returns a harness that tracked `a` and flushed twice, the second flush queued behind the first. The first request

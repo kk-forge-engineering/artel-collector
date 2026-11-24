@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { newChromeStorageAdapter, newExtensionCollector } from "./extension.js";
 import { newMemoryStorage } from "../../shared/exports.js";
-import { FakeFetch } from "../../../tests/fakeFetch.js";
-import { ENDPOINT, KEY, USER_ID } from "../../../tests/harness.js";
-import { stubChrome, stubServiceWorker, type FakeChrome } from "../../../tests/fakeChrome.js";
-import { stubListenedPage } from "../../../tests/fakePage.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
+import { ENDPOINT, KEY, USER_ID } from "#tests/harness.js";
+import { stubChrome, stubServiceWorker, type FakeChrome } from "#tests/fakeChrome.js";
+import { stubListenedPage } from "#tests/fakePage.js";
 
 describe("newChromeStorageAdapter", () => {
   it("keeps string values in chrome.storage.local and answers undefined for others", async () => {

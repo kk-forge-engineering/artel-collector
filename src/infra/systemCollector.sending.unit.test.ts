@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Mode, newMemoryStorage, Platform, type StorageAdapter } from "../shared/exports.js";
 import { newCollector } from "./exports.js";
-import { eventNamesIn, FakeFetch } from "../../tests/fakeFetch.js";
+import { eventNamesIn, FakeFetch } from "#tests/fakeFetch.js";
 import {
   ENDPOINT,
   KEY,
@@ -10,8 +10,8 @@ import {
   VERSION,
   newHarness,
   USER_ID,
-} from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+} from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 /** Returns the options every collector needs, for a test that calls `newCollector` without the harness. */
 function bareOptions(platform: Platform = Platform.Extension): {

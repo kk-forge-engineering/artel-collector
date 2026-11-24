@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { forwardTrack, newContentScriptCollector } from "./extension.js";
-import {
-  newExtensionHarness,
-  stubChrome,
-  type ExtensionHarness,
-} from "../../../tests/fakeChrome.js";
-import { FakeClock } from "../../../tests/fakeClock.js";
+import { newExtensionHarness, stubChrome, type ExtensionHarness } from "#tests/fakeChrome.js";
+import { FakeClock } from "#tests/fakeClock.js";
 
 const FROM_OTHER_EXTENSION = { id: "abcdefghijklmnopabcdefghijklmnop" };
 

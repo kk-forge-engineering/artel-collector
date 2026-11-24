@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KEY, newHarness, QUEUE_KEY, VERSION, storageKey } from "../../tests/harness.js";
+import { KEY, newHarness, QUEUE_KEY, VERSION, storageKey } from "#tests/harness.js";
 
 const FIELDS = { key: KEY, platform: "extension", version: VERSION, session: "k3j9x2m1qa0b" };
 const EVENT = { name: "a", day: "2026-10-29" };

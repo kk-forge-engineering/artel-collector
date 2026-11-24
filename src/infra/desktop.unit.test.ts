@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { newDesktopCollector, type DesktopCollectorOptions } from "./desktop.js";
 import { newMemoryStorage } from "../shared/exports.js";
-import { FakeFetch } from "../../tests/fakeFetch.js";
-import { stubListenedPage } from "../../tests/fakePage.js";
-import { DESKTOP_KEY, ENDPOINT, USER_ID, VERSION } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
+import { stubListenedPage } from "#tests/fakePage.js";
+import { DESKTOP_KEY, ENDPOINT, USER_ID, VERSION } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 const OPTIONS = {
   key: DESKTOP_KEY,

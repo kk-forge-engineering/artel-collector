@@ -6,7 +6,7 @@ import {
   QUEUE_KEY,
   SEND_DELAY_MS,
   type Harness,
-} from "../../tests/harness.js";
+} from "#tests/harness.js";
 
 describe("a lease that ends too far ahead", () => {
   it("sends an envelope a stopped host left leased once the clock was set back, within five minutes", async () => {
