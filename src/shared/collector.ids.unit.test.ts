@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, type Collector, type Transport } from "./exports.js";
-import { MAX_RETRY_DELAY_MS, newHarness, storageKey, USER_ID } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
-import { newSharedLock } from "../../tests/sharedLock.js";
+import { MAX_RETRY_DELAY_MS, newHarness, storageKey, USER_ID } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
+import { newSharedLock } from "#tests/sharedLock.js";
 
 const LAST_ID_KEY = storageKey("last_id");
 

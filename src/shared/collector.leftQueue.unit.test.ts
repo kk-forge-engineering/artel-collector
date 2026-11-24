@@ -9,7 +9,7 @@ import {
   SITE_KEY,
   storageKey,
   USER_ID,
-} from "../../tests/harness.js";
+} from "#tests/harness.js";
 
 const PLATFORM_KEYS = [
   [Platform.Web, SITE_KEY],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, type StorageAdapter } from "./exports.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
-import { KEY, newHarness, QUEUE_KEY, STATE_KEY, USER_ID, VERSION } from "../../tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
+import { KEY, newHarness, QUEUE_KEY, STATE_KEY, USER_ID, VERSION } from "#tests/harness.js";
 
 describe("the analytics state", () => {
   it("starts anonymous", async () => {

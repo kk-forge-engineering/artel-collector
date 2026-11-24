@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, type Collector } from "./exports.js";
-import { eventNamesIn } from "../../tests/fakeFetch.js";
-import { newSharedLock } from "../../tests/sharedLock.js";
+import { eventNamesIn } from "#tests/fakeFetch.js";
+import { newSharedLock } from "#tests/sharedLock.js";
 import {
   SEND_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -11,7 +11,7 @@ import {
   newHarness,
   type Harness,
   USER_ID,
-} from "../../tests/harness.js";
+} from "#tests/harness.js";
 
 describe("failures", () => {
   it("keeps the retry wait when an event comes while a failing request is on its way", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, newMemoryStorage, Platform, type StorageAdapter } from "./exports.js";
-import { KEY, newHarness, SITE_KEY, USER_ID } from "../../tests/harness.js";
+import { KEY, newHarness, SITE_KEY, USER_ID } from "#tests/harness.js";
 
 const ALL_PERIODS = ["day", "week", "month", "quarter", "year"];
 

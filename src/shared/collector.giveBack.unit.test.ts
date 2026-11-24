@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newMemoryStorage, type StorageAdapter } from "./exports.js";
-import { KEY, newHarness, VERSION, storageKey } from "../../tests/harness.js";
+import { KEY, newHarness, VERSION, storageKey } from "#tests/harness.js";
 
 const DAY = "2026-10-29";
 const FIELDS = { key: KEY, platform: "extension", version: VERSION, session: "k3j9x2m1qa0b" };

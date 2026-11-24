@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { newMemoryStorage } from "../shared/exports.js";
 import { newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from "./web.js";
-import { FakeFetch } from "../../tests/fakeFetch.js";
-import { FakeDocument, stubListenedPage } from "../../tests/fakePage.js";
-import { ENDPOINT, USER_ID, SITE_KEY } from "../../tests/harness.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
+import { FakeDocument, stubListenedPage } from "#tests/fakePage.js";
+import { ENDPOINT, USER_ID, SITE_KEY } from "#tests/harness.js";
 
 /** The part of the Web Storage API the adapter uses, over a Map. */
 class FakeWebStorage {

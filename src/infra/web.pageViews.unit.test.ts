@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { newWebCollector, trackPageViews } from "./web.js";
 import { newMemoryStorage, Platform } from "../shared/exports.js";
-import { FakeFetch } from "../../tests/fakeFetch.js";
-import { ENDPOINT, SITE_KEY, newHarness, storageKey } from "../../tests/harness.js";
-import { FakeDocument, newPageHarness, pageViews, stubPage } from "../../tests/fakePage.js";
+import { FakeFetch } from "#tests/fakeFetch.js";
+import { ENDPOINT, SITE_KEY, newHarness, storageKey } from "#tests/harness.js";
+import { FakeDocument, newPageHarness, pageViews, stubPage } from "#tests/fakePage.js";
 
 /** Returns a harness of a site whose `getPage` gives a page that is no URL for each path under `/bad`. */
 function newUnreadablePageHarness(): ReturnType<typeof newHarness> {

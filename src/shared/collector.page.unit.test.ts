@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState, Platform, type PageFields } from "./exports.js";
-import { newHarness } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { newHarness } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 /** Returns a harness of a site whose `getPage` gives `fields` and records each event name it is asked for. */
 function newSiteHarness(fields: PageFields): ReturnType<typeof newHarness> & { asked: string[] } {

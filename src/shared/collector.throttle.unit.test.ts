@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState } from "./exports.js";
-import { newHarness, type Harness } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { newHarness, type Harness } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 const THROTTLE_MS = 500;
 

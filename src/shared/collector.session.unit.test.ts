@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState } from "./exports.js";
-import { newHarness, USER_ID } from "../../tests/harness.js";
+import { newHarness, USER_ID } from "#tests/harness.js";
 
 describe("session", () => {
   it("keeps one session id of 12 characters from [0-9a-z] while the user stays active", async () => {

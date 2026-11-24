@@ -9,8 +9,8 @@ import {
   type StorageAdapter,
 } from "../shared/exports.js";
 import { newCollector } from "./exports.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
-import { newHarness, USER_ID, VERSION } from "../../tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
+import { newHarness, USER_ID, VERSION } from "#tests/harness.js";
 
 const SIXTEEN_PARAMS = Object.fromEntries(
   Array.from({ length: 16 }, (_, index) => [`p${index}`, index]),

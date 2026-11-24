@@ -6,8 +6,8 @@ import {
   Platform,
   type StorageAdapter,
 } from "./exports.js";
-import { newHarness, STATE_KEY, storageKey, USER_ID } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { newHarness, STATE_KEY, storageKey, USER_ID } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 const INSTALL_ID_KEY = storageKey("install_id");
 const INSTALL_ID = /^[\da-f]{32}$/;

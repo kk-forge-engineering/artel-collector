@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { newQueue } from "./queue.js";
 import { newMemoryStorage } from "./storage.js";
-import { KEY, VERSION } from "../../tests/harness.js";
+import { KEY, VERSION } from "#tests/harness.js";
 
 /** The name the queue keeps its envelopes under, in the storage `newChannelStorage` gives it. */
 const QUEUE_KEY = "queue";

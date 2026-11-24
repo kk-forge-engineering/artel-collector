@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { newHttpTransport } from "./systemCollector.js";
-import { FakeClock } from "../../tests/fakeClock.js";
-import { ENDPOINT } from "../../tests/harness.js";
+import { FakeClock } from "#tests/fakeClock.js";
+import { ENDPOINT } from "#tests/harness.js";
 
 describe("newHttpTransport", () => {
   it("resolves to 0 when fetch fails, as on a refusal a browser hides behind CORS", async () => {

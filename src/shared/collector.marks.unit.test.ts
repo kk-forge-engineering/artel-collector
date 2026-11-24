@@ -6,7 +6,7 @@ import {
   QUEUE_KEY,
   type Harness,
   storageKey,
-} from "../../tests/harness.js";
+} from "#tests/harness.js";
 
 const ALL_PERIODS = ["day", "week", "month", "quarter", "year"];
 

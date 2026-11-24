@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventParams } from "./exports.js";
-import { newHarness, USER_ID } from "../../tests/harness.js";
-import { fromUntypedHost } from "../../tests/untypedHost.js";
+import { newHarness, USER_ID } from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 /** Tracks one event and returns the names sent and the messages reported. */
 async function tracked(

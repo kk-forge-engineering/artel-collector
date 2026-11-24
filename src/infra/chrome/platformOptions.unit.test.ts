@@ -15,8 +15,8 @@ import {
   SITE_KEY,
   USER_ID,
   VERSION,
-} from "../../../tests/harness.js";
-import { fromUntypedHost } from "../../../tests/untypedHost.js";
+} from "#tests/harness.js";
+import { fromUntypedHost } from "#tests/untypedHost.js";
 
 type Options = Parameters<typeof newCollector>[0];
 
