@@ -16,7 +16,7 @@
   "main": "./dist/shared/exports.js",
   "types": "./dist/shared/exports.d.ts",
   "imports": {
-    "#/*": "./src/*",
+    "#src/*": "./src/*",
     "#tests/*": "./tests/*"
   },
   "exports": {
@@ -55,7 +55,7 @@
     "test:ci": "vitest run --coverage"
   },
   "devDependencies": {
-    "@kk-forge/oxlint-config": "^14.0.0",
+    "@kk-forge/oxlint-config": "^15.0.0",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.0.5",
     "oxfmt": "^0.73.0",
