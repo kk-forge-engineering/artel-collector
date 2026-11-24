@@ -1,7 +1,12 @@
 import { vi } from "vitest";
-import { newExtensionCollector } from "#/infra/chrome/exports.js";
-import { Mode, newMemoryStorage, type Collector, type StorageAdapter } from "#/shared/exports.js";
-import { newHttpTransport } from "#/infra/exports.js";
+import { newExtensionCollector } from "#src/infra/chrome/exports.js";
+import {
+  Mode,
+  newMemoryStorage,
+  type Collector,
+  type StorageAdapter,
+} from "#src/shared/exports.js";
+import { newHttpTransport } from "#src/infra/exports.js";
 import { FakeClock } from "./fakeClock.js";
 import { FakeFetch } from "./fakeFetch.js";
 import { ENDPOINT, KEY, RETRY_DELAY_MS, SEND_DELAY_MS } from "./harness.js";

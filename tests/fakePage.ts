@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import { Platform } from "#/shared/exports.js";
+import { Platform } from "#src/shared/exports.js";
 import { newHarness, type Harness } from "./harness.js";
 
 type HistoryCall = (this: void, data: unknown, unused: string, url?: string | URL | null) => void;
