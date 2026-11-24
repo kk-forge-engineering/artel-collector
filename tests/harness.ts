@@ -1,8 +1,6 @@
 import {
   AnalyticsState,
   Mode,
-  newCollector,
-  newHttpTransport,
   newMemoryStorage,
   Platform,
   type Browser,
@@ -12,7 +10,8 @@ import {
   type PageFields,
   type StorageAdapter,
   type Transport,
-} from "../src/exports.js";
+} from "#src/shared/exports.js";
+import { newCollector, newHttpTransport } from "#src/infra/exports.js";
 import { FakeClock } from "./fakeClock.js";
 import { FakeFetch } from "./fakeFetch.js";
 

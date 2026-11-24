@@ -1,6 +1,6 @@
 {
   "name": "@kk-forge/artel-collector",
-  "version": "0.5.0",
+  "version": "0.6.1",
   "description": "Sends a product's analytics events to the intake service",
   "license": "MIT",
   "author": "KK Forge",
@@ -13,28 +13,28 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/exports.js",
-  "types": "./dist/exports.d.ts",
+  "main": "./dist/shared/exports.js",
+  "types": "./dist/shared/exports.d.ts",
+  "imports": {
+    "#src/*": "./src/*",
+    "#tests/*": "./tests/*"
+  },
   "exports": {
     ".": {
-      "types": "./dist/exports.d.ts",
-      "default": "./dist/exports.js"
+      "types": "./dist/shared/exports.d.ts",
+      "default": "./dist/shared/exports.js"
     },
-    "./web": {
-      "types": "./dist/web.d.ts",
-      "default": "./dist/web.js"
+    "./infra": {
+      "types": "./dist/infra/exports.d.ts",
+      "default": "./dist/infra/exports.js"
     },
-    "./extension": {
-      "types": "./dist/extension.d.ts",
-      "default": "./dist/extension.js"
-    },
-    "./desktop": {
-      "types": "./dist/desktop.d.ts",
-      "default": "./dist/desktop.js"
+    "./infra/chrome": {
+      "types": "./dist/infra/chrome/exports.d.ts",
+      "default": "./dist/infra/chrome/exports.js"
     },
     "./testing": {
-      "types": "./dist/testing.d.ts",
-      "default": "./dist/testing.js"
+      "types": "./dist/testing/exports.d.ts",
+      "default": "./dist/testing/exports.js"
     }
   },
   "publishConfig": {
@@ -55,7 +55,7 @@
     "test:ci": "vitest run --coverage"
   },
   "devDependencies": {
-    "@kk-forge/oxlint-config": "^11.0.0",
+    "@kk-forge/oxlint-config": "^15.0.0",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.0.5",
     "oxfmt": "^0.73.0",

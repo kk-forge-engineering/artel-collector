@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import * as core from "./exports.js";
+import * as core from "./shared/exports.js";
 import type {
   ActiveDaysBucket,
   AnalyticsState,
@@ -21,19 +21,17 @@ import type {
   Transport,
   TransportResult,
   UninstallParams,
-} from "./exports.js";
-import * as desktop from "./desktop.js";
-import type { DesktopCollectorOptions } from "./desktop.js";
-import * as extension from "./extension.js";
-import type { ExtensionCollectorOptions } from "./extension.js";
-import * as testing from "./testing.js";
-import type { RecordedEvent, RecordingCollector } from "./testing.js";
-import * as web from "./web.js";
-import { USER_ID, SITE_KEY } from "../tests/harness.js";
-import type { WebCollectorOptions } from "./web.js";
+} from "./shared/exports.js";
+import * as infra from "./infra/exports.js";
+import type { DesktopCollectorOptions, WebCollectorOptions } from "./infra/exports.js";
+import * as extension from "./infra/chrome/exports.js";
+import type { ExtensionCollectorOptions } from "./infra/chrome/exports.js";
+import * as testing from "./testing/exports.js";
+import type { RecordedEvent, RecordingCollector } from "./testing/exports.js";
+import { USER_ID, SITE_KEY } from "#tests/harness.js";
 
-// This suite fails when a change removes or renames an export that README.md documents. Products build on these names,
-// so such a change needs a breaking release.
+// This suite fails when a change removes or renames an export that README.md documents, or moves it to another entry
+// point of package.json's `exports`. Products build on these names, so such a change needs a breaking release.
 describe("the public API", () => {
   it("exports these values from each entry point", () => {
     expect(new Set(Object.keys(core))).toEqual(
@@ -47,18 +45,19 @@ describe("the public API", () => {
         "Mode",
         "Platform",
         "detectBrowser",
-        "newCollector",
-        "newHttpTransport",
         "newMemoryStorage",
-        "systemClock",
       ]),
     );
-    expect(new Set(Object.keys(web))).toEqual(
+    expect(new Set(Object.keys(infra))).toEqual(
       new Set([
+        "newCollector",
+        "newDesktopCollector",
+        "newHttpTransport",
         "newLocalStorageAdapter",
         "newWebCollector",
         "newWebLock",
         "pageFields",
+        "systemClock",
         "trackPageViews",
       ]),
     );
@@ -70,7 +69,6 @@ describe("the public API", () => {
         "newExtensionCollector",
       ]),
     );
-    expect(new Set(Object.keys(desktop))).toEqual(new Set(["newDesktopCollector"]));
     expect(new Set(Object.keys(testing))).toEqual(
       new Set(["newRecordingCollector", "queuedEvents"]),
     );
@@ -314,8 +312,8 @@ describe("the public API", () => {
       version: "1.0.0",
       storage: core.newMemoryStorage(),
     } as const;
-    const anonymous = core.newCollector({ ...options, endpoint: "https://x", mode: "anonymous" });
-    const pseudonymous = core.newCollector({
+    const anonymous = infra.newCollector({ ...options, endpoint: "https://x", mode: "anonymous" });
+    const pseudonymous = infra.newCollector({
       ...options,
       endpoint: "https://x",
       mode: "pseudonymous",
@@ -329,29 +327,29 @@ describe("the public API", () => {
       endpoint: "https://x",
       mode: "pseudonymous",
     } as const;
-    expectTypeOf(() => web.newWebCollector(platformBase)).returns.toEqualTypeOf<
+    expectTypeOf(() => infra.newWebCollector(platformBase)).returns.toEqualTypeOf<
       Collector<"pseudonymous">
     >();
     expectTypeOf(() => extension.newExtensionCollector(platformBase)).returns.toEqualTypeOf<
       Collector<"pseudonymous">
     >();
     expectTypeOf(() =>
-      desktop.newDesktopCollector({ ...platformBase, platform: "linux" }),
+      infra.newDesktopCollector({ ...platformBase, platform: "linux" }),
     ).returns.toEqualTypeOf<Collector<"pseudonymous">>();
   });
 
   it("takes a mode known only at run time on every platform constructor", () => {
     expectTypeOf((options: CollectorOptions) =>
-      core.newCollector(options),
+      infra.newCollector(options),
     ).returns.toEqualTypeOf<Collector>();
     expectTypeOf((options: WebCollectorOptions) =>
-      web.newWebCollector(options),
+      infra.newWebCollector(options),
     ).returns.toEqualTypeOf<Collector>();
     expectTypeOf((options: ExtensionCollectorOptions) =>
       extension.newExtensionCollector(options),
     ).returns.toEqualTypeOf<Collector>();
     expectTypeOf((options: DesktopCollectorOptions) =>
-      desktop.newDesktopCollector(options),
+      infra.newDesktopCollector(options),
     ).returns.toEqualTypeOf<Collector>();
   });
 
