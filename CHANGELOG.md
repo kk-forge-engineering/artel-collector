@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- `trackPageViews` decides that a navigation leads to another page by the page the collector would send, as `getPage` gives it, not by `location.pathname`. A web app that keeps its routes in the hash passes a `getPage` that reads the route from the hash, and gets a `page_view` for each route where it got one per page load. The tracker also listens to `hashchange`, and a navigation that several events report still sends one.
+- Without a `getPage` of its own nothing changes: the page is the path, so a change of the query or the hash alone still sends no `page_view`. Where the collector reads no page, as on another platform than web, the tracker compares `location.pathname` as before.
+- `trackPageView(collector)` from `@kk-forge/artel-collector/infra` sends a `page_view` of the page `getPage` gives now, unless the last `page_view` sent that page. A router that changes the screen without changing the address calls it after each change.
+
 ## 0.7.0
 
 - A collector sends its first event at once, not after the send delay. A page closed a second after its load has its `page_view` on the way.

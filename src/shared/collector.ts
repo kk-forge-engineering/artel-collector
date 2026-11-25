@@ -25,7 +25,7 @@ import { acceptedEvent } from "./eventCheck.js";
 import { newInstallState } from "./installState.js";
 import { exclusive } from "./lock.js";
 import { newOutbox } from "./outbox.js";
-import { newPageReader, type PageRead, type PageReader } from "./page.js";
+import { newPageReader, notePageReader, type PageRead, type PageReader } from "./page.js";
 import type { Identity, QueuedEnvelope } from "./queue.js";
 import {
   carriesPage,
@@ -483,6 +483,9 @@ export function newCollectorOn({
         };
       }, undefined),
   };
+  if (pages !== undefined) {
+    notePageReader(collector, pages);
+  }
   void sendWhatIsLeft();
   return collector;
 }

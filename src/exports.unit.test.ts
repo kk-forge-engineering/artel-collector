@@ -58,6 +58,7 @@ describe("the public API", () => {
         "newWebLock",
         "pageFields",
         "systemClock",
+        "trackPageView",
         "trackPageViews",
       ]),
     );

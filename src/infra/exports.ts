@@ -5,6 +5,7 @@ export {
   newWebCollector,
   newWebLock,
   pageFields,
+  trackPageView,
   trackPageViews,
   type WebCollectorOptions,
 } from "./web.js";

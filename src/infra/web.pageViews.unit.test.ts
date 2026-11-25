@@ -3,7 +3,14 @@ import { newWebCollector, trackPageViews } from "./web.js";
 import { newMemoryStorage, Platform } from "../shared/exports.js";
 import { FakeFetch } from "#tests/fakeFetch.js";
 import { ENDPOINT, SITE_KEY, newHarness, storageKey } from "#tests/harness.js";
-import { FakeDocument, newPageHarness, pageViews, stubPage } from "#tests/fakePage.js";
+import {
+  FakeDocument,
+  type FakePage,
+  newHashRouteHarness,
+  newPageHarness,
+  pageViews,
+  stubPage,
+} from "#tests/fakePage.js";
 
 /** Returns a harness of a site whose `getPage` gives a page that is no URL for each path under `/bad`. */
 function newUnreadablePageHarness(): ReturnType<typeof newHarness> {
@@ -43,6 +50,103 @@ describe("trackPageViews", () => {
     await harness.settle();
 
     expect(pageViews(harness).map(([path]) => path)).toEqual(["/"]);
+  });
+
+  it("sends nothing for a change of the hash alone by default, whichever way the browser reports it", async () => {
+    const page = stubPage();
+    const navigation = new EventTarget();
+    vi.stubGlobal("navigation", navigation);
+    const harness = newPageHarness();
+
+    trackPageViews(harness.collector);
+    page.goToHash("#pricing");
+    history.pushState({}, "", "#docs");
+    history.replaceState({}, "", "#team");
+    location.hash = "#faq";
+    window.dispatchEvent(new Event("hashchange"));
+    location.hash = "#blog";
+    navigation.dispatchEvent(new Event("currententrychange"));
+    await harness.settle();
+
+    expect(pageViews(harness).map(([path]) => path)).toEqual(["/"]);
+  });
+
+  it.each([
+    ["a link, reported as popstate and hashchange", (page: FakePage) => page.goToHash("#ideas/1")],
+    ["pushState", () => history.pushState({}, "", "#ideas/1")],
+    ["replaceState", () => history.replaceState({}, "", "#ideas/1")],
+    [
+      "hashchange alone",
+      () => {
+        location.hash = "#ideas/1";
+        window.dispatchEvent(new Event("hashchange"));
+      },
+    ],
+    [
+      "the Navigation API alone",
+      () => {
+        location.hash = "#ideas/1";
+        Reflect.get(globalThis, "navigation").dispatchEvent(new Event("currententrychange"));
+      },
+    ],
+  ])("sends one page_view for a route of the hash that comes by %s", async (_, move) => {
+    const page = stubPage();
+    vi.stubGlobal("navigation", new EventTarget());
+    const harness = newHashRouteHarness();
+
+    trackPageViews(harness.collector);
+    move(page);
+    Reflect.get(globalThis, "navigation").dispatchEvent(new Event("currententrychange"));
+    await harness.settle();
+
+    expect(pageViews(harness).map(([path]) => path)).toEqual(["/", "/ideas/:id"]);
+  });
+
+  it("sends page_view for each route of a getPage that reads it from the hash, and none for another record of one route", async () => {
+    const page = stubPage();
+    const harness = newHashRouteHarness();
+
+    trackPageViews(harness.collector);
+    page.goToHash("#ideas");
+    page.goToHash("#ideas/123");
+    page.goToHash("#/ideas/456");
+    history.pushState({}, "", "#/projects/7");
+    page.back("/#ideas/456");
+    await harness.settle();
+
+    expect(pageViews(harness).map(([path]) => path)).toEqual([
+      "/",
+      "/ideas",
+      "/ideas/:id",
+      "/projects/:id",
+      "/ideas/:id",
+    ]);
+  });
+
+  it("sends a hash route's pattern without its query, and /other for a hash outside the routes", async () => {
+    const page = stubPage();
+    const harness = newHashRouteHarness();
+
+    trackPageViews(harness.collector);
+    page.goToHash("#ideas/123?tab=x");
+    page.goToHash("#ideas/456?tab=y");
+    page.goToHash("#access_token=s3cr3t&token_type=bearer");
+    await harness.settle();
+
+    expect(pageViews(harness).map(([path]) => path)).toEqual(["/", "/ideas/:id", "/other"]);
+  });
+
+  it("sends page_view only for another path on a platform whose collector reads no page", async () => {
+    const page = stubPage();
+    const harness = newHarness({ platform: Platform.Extension });
+
+    trackPageViews(harness.collector);
+    page.goToHash("#settings");
+    history.pushState({}, "", "/?tab=2");
+    history.pushState({}, "", "/options.html#about");
+    await harness.settle();
+
+    expect(harness.fetch.eventNames).toEqual(["page_view", "page_view"]);
   });
 
   it("sends one page_view for a navigation the Navigation API reports too", async () => {
@@ -85,6 +189,7 @@ describe("trackPageViews", () => {
     stop();
     history.pushState({}, "", "/pricing");
     page.back("/docs");
+    page.goToHash("#team");
     navigation.dispatchEvent(new Event("currententrychange"));
     await harness.settle();
 

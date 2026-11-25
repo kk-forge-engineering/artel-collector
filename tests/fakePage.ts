@@ -11,6 +11,7 @@ export class FakePage {
     host: "example.com",
     pathname: "/",
     search: "",
+    hash: "",
     hostname: "example.com",
   };
   readonly document = new FakeDocument("https://www.google.com/search?q=editor");
@@ -26,10 +27,21 @@ export class FakePage {
     this.window.dispatchEvent(new Event("popstate"));
   }
 
+  /** Sets the fragment to `hash`, as a link to `#…` does, which a browser reports as a `popstate` and a `hashchange`. */
+  goToHash(hash: string): void {
+    this.location.hash = hash;
+    this.window.dispatchEvent(new Event("popstate"));
+    this.window.dispatchEvent(new Event("hashchange"));
+  }
+
   private moveTo(url: string | URL | null | undefined): void {
-    const next = new URL(String(url ?? ""), "https://example.com/");
+    const next = new URL(
+      String(url ?? ""),
+      `https://example.com${this.location.pathname}${this.location.search}`,
+    );
     this.location.pathname = next.pathname;
     this.location.search = next.search;
+    this.location.hash = next.hash;
   }
 }
 
@@ -57,6 +69,20 @@ export function newPageHarness(): Harness {
     getPage: () => ({ page: location.pathname }),
   });
   return harness;
+}
+
+/** The routes the web app of `newHashRouteHarness` sends as pages. */
+const HASH_ROUTES = new Set(["/", "/ideas", "/ideas/:id", "/projects", "/projects/:id"]);
+
+/** Returns the route pattern of `hash` if `HASH_ROUTES` lists it and `/other` if not, as the hash-route example in README does. */
+function routeOf(hash: string): string {
+  const route = `/${hash.replace(/^#\/?/, "").split("?")[0] ?? ""}`.replaceAll(/\/\d+/g, "/:id");
+  return HASH_ROUTES.has(route) ? route : "/other";
+}
+
+/** Returns a harness of a web app that keeps its routes in the hash and sends each route's pattern as its page. */
+export function newHashRouteHarness(): Harness {
+  return newHarness({ platform: Platform.Web, getPage: () => ({ page: routeOf(location.hash) }) });
 }
 
 /** A visible document with a referrer, which takes listeners as a page's does and which a test can hide and show. */
