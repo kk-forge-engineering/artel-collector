@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { newDesktopCollector, type DesktopCollectorOptions } from "./desktop.js";
 import { newMemoryStorage } from "../shared/exports.js";
+import { FakeClock } from "#tests/fakeClock.js";
 import { FakeFetch } from "#tests/fakeFetch.js";
 import { stubListenedPage } from "#tests/fakePage.js";
 import { DESKTOP_KEY, ENDPOINT, USER_ID, VERSION } from "#tests/harness.js";
@@ -39,15 +40,19 @@ function stubWebview(): { items: Map<string, string>; lockNames: string[]; fetch
 }
 
 describe("newDesktopCollector", () => {
-  it("adds no listener to the window: a send at hide would not finish before the window is gone", async () => {
-    stubWebview();
-    const listened = stubListenedPage();
+  it("sends what is queued when the window turns hidden, and listens to nothing else", async () => {
+    const { fetch } = stubWebview();
+    const { added, document } = stubListenedPage();
+    const clock = new FakeClock("2026-10-29T10:00:00");
 
-    const collector = newDesktopCollector({ ...OPTIONS, mode: "anonymous" });
+    const collector = newDesktopCollector({ ...OPTIONS, mode: "anonymous", clock });
+    await clock.advance(0);
+    await collector.track("report_exported");
+    document.hide();
+    await clock.advance(0);
 
-    expect(listened).toEqual([]);
-    // The collector reads `localStorage` when it runs, so its start must end before the next test stubs another one.
-    await collector.getState();
+    expect(added).toEqual(["visibilitychange"]);
+    expect(fetch.eventNames).toEqual(["installed", "report_exported"]);
   });
 
   it("sends installed on its first start and updated on the first start of another version", async () => {

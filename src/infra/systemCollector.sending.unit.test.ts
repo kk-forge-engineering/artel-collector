@@ -336,28 +336,43 @@ describe("batching", () => {
     expect(harness.fetch.requests).toHaveLength(1);
   });
 
-  it("sends within 5 s of the first queued event, even while events keep coming", async () => {
+  it("sends the first event at once, so a page closed a second after its load has sent it", async () => {
     const harness = newHarness();
 
+    await harness.collector.track("page_view");
+    await harness.clock.advance(0);
+
+    expect(harness.fetch.eventNames).toEqual(["page_view"]);
+  });
+
+  it("sends within 5 s of the first event waiting after the first send, even while events keep coming", async () => {
+    const harness = newHarness();
     await harness.collector.track("a");
-    await harness.clock.advance(SEND_DELAY_MS - 1_000);
+    await harness.clock.advance(0);
+
     await harness.collector.track("b");
+    await harness.clock.advance(SEND_DELAY_MS - 1_000);
+    await harness.collector.track("c");
     await harness.clock.advance(900);
-    expect(harness.fetch.requests).toHaveLength(0);
+    expect(harness.fetch.requests).toHaveLength(1);
 
     await harness.clock.advance(100);
 
-    expect(harness.fetch.requests).toHaveLength(1);
-    expect(harness.fetch.eventNames).toEqual(["a", "b"]);
+    expect(harness.fetch.requests).toHaveLength(2);
+    expect(harness.fetch.eventNames).toEqual(["a", "b", "c"]);
   });
 
   it("sends within the delay the host sets", async () => {
     const harness = newHarness({ sendDelaySeconds: 1 });
-
     await harness.collector.track("a");
-    await harness.clock.advance(1_000);
+    await harness.clock.advance(0);
 
+    await harness.collector.track("b");
+    await harness.clock.advance(999);
     expect(harness.fetch.eventNames).toEqual(["a"]);
+    await harness.clock.advance(1);
+
+    expect(harness.fetch.eventNames).toEqual(["a", "b"]);
   });
 
   it("posts at once on flush", async () => {

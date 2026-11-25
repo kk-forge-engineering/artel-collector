@@ -218,11 +218,13 @@ describe("options only untyped code passes", () => {
       const harness = newHarness({ sendDelaySeconds: fromUntypedHost<number>(delay) });
 
       await harness.collector.track("a");
+      await harness.clock.advance(0);
+      await harness.collector.track("b");
       await harness.clock.advance(4_999);
       const early = harness.fetch.requests.length;
       await harness.clock.advance(1);
 
-      expect([early, harness.fetch.eventNames]).toEqual([0, ["a"]]);
+      expect([early, harness.fetch.eventNames]).toEqual([1, ["a", "b"]]);
     },
   );
 

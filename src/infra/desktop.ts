@@ -8,7 +8,7 @@ import type {
 } from "../shared/collectorTypes.js";
 import type { Platform } from "../shared/envelope.js";
 import type { StorageAdapter } from "../shared/storage.js";
-import { newLocalStorageAdapter, newWebLock } from "./web.js";
+import { flushWhenHidden, newLocalStorageAdapter, newWebLock } from "./web.js";
 
 /**
  * The options of `newDesktopCollector`: those of `newCollector` with `storage` optional and a desktop `platform`. An
@@ -30,7 +30,7 @@ export type DesktopCollectorOptions = Omit<CommonOptions, "storage"> & {
  * Returns a collector for a window of a desktop app, such as a Tauri webview. Its windows share the webview's
  * `localStorage` and Web Locks, so they keep one queue and one state. It sends the user's language from
  * `navigator.language`. The app passes its own `uiLanguage`. It sends `installed` and `updated` itself when they are
- * due.
+ * due, and sends what is queued each time the window turns hidden, as `flushWhenHidden` in `src/infra/web.ts` describes.
  */
 export function newDesktopCollector<M extends Mode>(
   options: DesktopCollectorOptions & { mode: M },
@@ -46,5 +46,6 @@ export function newDesktopCollector(options: DesktopCollectorOptions): Collector
   // lock, so every window may build a collector. The collector runs its calls in this order.
   void collector.installed();
   void collector.updated();
+  flushWhenHidden(collector);
   return collector;
 }
