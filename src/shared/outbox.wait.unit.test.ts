@@ -46,10 +46,10 @@ describe("Retry-After", () => {
   it.each([
     ["a 429 with delta-seconds", () => ({ status: 429, retryAfter: "10" }), 10_000],
     ["a 503 with delta-seconds", () => ({ status: 503, retryAfter: "10" }), 10_000],
-    // The first request goes at 14:00:05 UTC on 29 October 2026.
+    // The first request goes at 14:00:00 UTC on 29 October 2026.
     [
       "a 429 with an HTTP date",
-      () => ({ status: 429, retryAfter: "Thu, 29 Oct 2026 14:00:25 GMT" }),
+      () => ({ status: 429, retryAfter: "Thu, 29 Oct 2026 14:00:20 GMT" }),
       20_000,
     ],
     [
@@ -81,7 +81,7 @@ describe("Retry-After", () => {
     harness.fetch.respondNextWith(429, 1, { "Retry-After": "10" });
 
     await harness.collector.track("a");
-    await harness.clock.advance(SEND_DELAY_MS + 10_000 - 1);
+    await harness.clock.advance(10_000 - 1);
     expect(harness.fetch.requests).toHaveLength(1);
     await harness.clock.advance(1);
 
@@ -233,7 +233,7 @@ describe("an opt-out during a retry wait", () => {
   it("sends the opted_out at the end of the wait, not at once", async () => {
     const { harness, times } = newAnsweringHarness([() => ({ status: 429, retryAfter: "3" })]);
     await harness.collector.track("a");
-    await harness.clock.advance(SEND_DELAY_MS);
+    await harness.clock.advance(0);
 
     await harness.collector.setState(AnalyticsState.OptedOut);
     const sentAtOnce = times.length;

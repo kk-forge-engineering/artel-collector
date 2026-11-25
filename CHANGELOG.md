@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- A collector sends its first event at once, not after the send delay. A page closed a second after its load has its `page_view` on the way.
+- `newWebCollector` and `newDesktopCollector` flush when the page or window turns hidden, as on a switch to another tab or app. The flush keeps the retry wait the intake asked for, and sends nothing in the `opted_out` state but a queued `opted_out`.
+- A page that closes or navigates away still sends nothing at that moment: its send needs the lock, which a closing page never gets. What it queued goes with the next visit, as before.
+
 ## 0.6.1
 
 Nothing a product sees changes. The package lints with `@kk-forge/oxlint-config` 13, and its tests reach their helpers and the source through the `#tests/` and `#/` subpath imports.

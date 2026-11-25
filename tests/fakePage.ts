@@ -59,21 +59,39 @@ export function newPageHarness(): Harness {
   return harness;
 }
 
-/** A document with a referrer, which takes listeners as a page's does. */
+/** A visible document with a referrer, which takes listeners as a page's does and which a test can hide and show. */
 export class FakeDocument extends EventTarget {
+  visibilityState: DocumentVisibilityState = "visible";
+
   constructor(readonly referrer = "") {
     super();
+  }
+
+  /** Turns the document hidden, as a switch to another tab does. */
+  hide(): void {
+    this.turn("hidden");
+  }
+
+  /** Turns the document visible again, as a switch back to its tab does. */
+  show(): void {
+    this.turn("visible");
+  }
+
+  private turn(state: DocumentVisibilityState): void {
+    this.visibilityState = state;
+    this.dispatchEvent(new Event("visibilitychange"));
   }
 }
 
 /**
- * Puts a fresh `FakeDocument` and window in place of the page globals, and returns the list each event type that a
- * listener is added for goes to.
+ * Puts a fresh `FakeDocument` and window in place of the page globals, and returns the document and the list each event
+ * type that a listener is added for goes to.
  */
-export function stubListenedPage(): string[] {
+export function stubListenedPage(): { added: string[]; document: FakeDocument } {
   const added: string[] = [];
+  const document = new FakeDocument();
   for (const [name, target] of [
-    ["document", new FakeDocument()],
+    ["document", document],
     ["window", new EventTarget()],
   ] as const) {
     const add = target.addEventListener.bind(target);
@@ -83,5 +101,5 @@ export function stubListenedPage(): string[] {
     };
     vi.stubGlobal(name, target);
   }
-  return added;
+  return { added, document };
 }

@@ -184,11 +184,12 @@ function keyOf(platform: Platform): string {
 }
 
 /**
- * Returns the time from an event to the start of send attempt `attempt`, counted from 1, when every earlier attempt
- * fails. The retry delay doubles from `RETRY_DELAY_MS` up to `MAX_RETRY_DELAY_MS`, as the outbox does.
+ * Returns the time from a collector's first event, which it sends at once, to the start of send attempt `attempt`,
+ * counted from 1, when every earlier attempt fails. The retry delay doubles from `RETRY_DELAY_MS` up to
+ * `MAX_RETRY_DELAY_MS`, as the outbox does.
  */
 export function attemptStartMs(attempt: number): number {
-  let elapsed = SEND_DELAY_MS;
+  let elapsed = 0;
   for (let retry = 0; retry < attempt - 1; retry++) {
     elapsed += Math.min(RETRY_DELAY_MS * 2 ** retry, MAX_RETRY_DELAY_MS);
   }

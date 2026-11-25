@@ -26,7 +26,8 @@ export type WebCollectorOptions = Omit<CommonOptions, "storage"> & {
 /**
  * Returns a collector for a website or a web app. It runs over `localStorage` and Web Locks, and sends the user's
  * language from `navigator.language`, the page from `pageFields` and, in a state with an id, the browser from
- * `detectBrowser`. The site passes its own `uiLanguage`. A desktop window uses `newDesktopCollector`.
+ * `detectBrowser`. It sends what is queued each time the page turns hidden, as `flushWhenHidden` describes. The site
+ * passes its own `uiLanguage`. A desktop window uses `newDesktopCollector`.
  */
 export function newWebCollector<M extends Mode>(
   options: WebCollectorOptions & { mode: M },
@@ -39,13 +40,33 @@ export function newWebCollector(options: WebCollectorOptions): Collector {
     browserLanguage: options.browserLanguage ?? navigator.language,
     getPage: options.getPage ?? pageFieldsWherePageIs,
   };
-  return options.mode === Mode.Anonymous
-    ? newCollector({ ...options, ...defaults })
-    : newCollector({
-        ...options,
-        ...defaults,
-        browser: options.browser ?? (() => detectBrowser(navigator)),
-      });
+  const collector =
+    options.mode === Mode.Anonymous
+      ? newCollector({ ...options, ...defaults })
+      : newCollector({
+          ...options,
+          ...defaults,
+          browser: options.browser ?? (() => detectBrowser(navigator)),
+        });
+  flushWhenHidden(collector);
+  return collector;
+}
+
+/**
+ * Flushes `collector` each time the document turns hidden, as when the user switches to another tab or app or
+ * minimizes the window. The page lives on then, so the send ends, and a mobile browser that freezes a hidden page soon
+ * after finds the queue sent. A page that closes or navigates away gets no further than the lock, so its events wait
+ * for the next visit. A Web Worker has no document, so the function does nothing there.
+ */
+export function flushWhenHidden(collector: Collector): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      void collector.flush();
+    }
+  });
 }
 
 /**

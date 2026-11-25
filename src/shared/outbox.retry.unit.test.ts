@@ -55,12 +55,12 @@ describe("failures", () => {
     await collector.track("b");
     await harness.clock.advance(MAX_RETRY_DELAY_MS);
 
-    // The first request starts after the send delay and answers 429 ten seconds later. The retry waits its delay from
-    // that answer, then sends `a` and `b` one after the other.
+    // The first request starts at once and answers 429 ten seconds later. The retry waits its delay from that answer,
+    // then sends `a` and `b` one after the other.
     expect(starts.map((time) => time - start)).toEqual([
-      SEND_DELAY_MS,
-      SEND_DELAY_MS + 10_000 + RETRY_DELAY_MS,
-      SEND_DELAY_MS + 20_000 + RETRY_DELAY_MS,
+      0,
+      10_000 + RETRY_DELAY_MS,
+      20_000 + RETRY_DELAY_MS,
     ]);
   });
 
@@ -112,7 +112,7 @@ describe("failures", () => {
     harness.fetch.respondNextWith(503, 3);
 
     await harness.collector.track("a");
-    await harness.clock.advance(SEND_DELAY_MS);
+    await harness.clock.advance(0);
     const attempts = [harness.fetch.requests.length];
     for (const pause of [RETRY_DELAY_MS, 2 * RETRY_DELAY_MS, 4 * RETRY_DELAY_MS]) {
       await harness.clock.advance(pause);
@@ -167,7 +167,7 @@ describe("failures", () => {
     const harness = newHarness();
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     const restarted = harness.restart();
     await restarted.track("b");
@@ -215,7 +215,7 @@ describe("failures", () => {
     const harness = newHarness();
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     harness.clock.setLocal("2026-10-31T10:00:00");
     await harness.collector.track("b");
@@ -229,7 +229,7 @@ describe("failures", () => {
     const harness = newHarness();
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     harness.clock.setLocal("2026-10-30T10:00:00");
     await harness.collector.flush();
@@ -242,7 +242,7 @@ describe("failures", () => {
     const harness = newHarness({ getId: () => id });
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     id = undefined;
     await harness.collector.flush();
@@ -260,7 +260,7 @@ describe("failures", () => {
     const harness = newHarness({ getId: () => USER_ID });
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     await harness.collector.forget(USER_ID);
     await harness.collector.flush();
@@ -347,7 +347,7 @@ describe("failures", () => {
     const harness = newHarness({ lock: newSharedLock() });
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
     const other = harness.restart();
     await other.getState();
 

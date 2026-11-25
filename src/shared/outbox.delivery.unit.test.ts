@@ -212,7 +212,7 @@ describe("delivery guarantees", () => {
     const harness = newHarness();
     harness.fetch.respondNextWith(503, 2);
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     // The harness clock runs in New York, where 21:00 on 30 Oct is 31 Oct in UTC. The event of 29 Oct is local
     // yesterday but two UTC days back.
@@ -265,7 +265,7 @@ describe("batch key", () => {
       },
     });
     await harness.collector.track("a");
-    await harness.settle();
+    await harness.clock.advance(attemptStartMs(2));
 
     harness.clock.jumpMinutes(3 * 24 * 60);
     await harness.collector.flush();

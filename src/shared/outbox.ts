@@ -118,6 +118,8 @@ export function newOutbox({
   /** Cancels the timer of the pending retry. Set only while a retry is pending. */
   let cancelRetryTimer: (() => void) | undefined;
   let retryDelay = RETRY_DELAY_MS;
+  /** Whether this outbox queued an event yet. */
+  let hasAdded = false;
   /** Chains the sends, so that one runs at a time and queued envelopes leave in the order they were made. */
   let sending: Promise<void> = Promise.resolve();
 
@@ -336,9 +338,11 @@ export function newOutbox({
   return {
     add: async (fields, event, options) => {
       const { isFull, dropped } = await queue.add(fields, event, options);
-      // A full envelope goes at once. Otherwise the send waits, so that the events of the next few seconds share one
-      // request.
-      sendWithin(isFull ? 0 : sendDelayMs);
+      // A full envelope goes at once, and so does the first event of this outbox, so that a page closed within the
+      // send delay of its load has its request on the way. Otherwise the send waits, so that the events of the next few
+      // seconds share one request.
+      sendWithin(isFull || !hasAdded ? 0 : sendDelayMs);
+      hasAdded = true;
       return dropped;
     },
     sendSoon: () => sendWithin(sendDelayMs),

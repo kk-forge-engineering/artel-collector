@@ -225,11 +225,11 @@ describe("the access level of chrome.storage.local", () => {
     }
     stubChrome();
     vi.stubGlobal("navigator", { language: "pt-BR" });
-    const listened = stubListenedPage();
+    const { added } = stubListenedPage();
 
     newExtensionCollector({ key: KEY, endpoint: ENDPOINT, mode: "anonymous" });
 
-    expect(listened).toEqual([]);
+    expect(added).toEqual([]);
   });
 
   it("closes it to content scripts in the service worker", async () => {

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { newMemoryStorage } from "../shared/exports.js";
+import { AnalyticsState, newMemoryStorage, type Collector } from "../shared/exports.js";
 import { newLocalStorageAdapter, newWebCollector, pageFields, newWebLock } from "./web.js";
+import { FakeClock } from "#tests/fakeClock.js";
 import { FakeFetch } from "#tests/fakeFetch.js";
 import { FakeDocument, stubListenedPage } from "#tests/fakePage.js";
-import { ENDPOINT, USER_ID, SITE_KEY } from "#tests/harness.js";
+import { ENDPOINT, SEND_DELAY_MS, USER_ID, SITE_KEY } from "#tests/harness.js";
 
 /** The part of the Web Storage API the adapter uses, over a Map. */
 class FakeWebStorage {
@@ -133,7 +134,11 @@ describe("newWebCollector", () => {
    * Stubs a Firefox page at `/editor` with no Web Locks, and returns the network the collector posts to and the fake
    * `localStorage`.
    */
-  function stubPage(): { fetch: FakeFetch; webStorage: FakeWebStorage; listened: string[] } {
+  function stubPage(): {
+    fetch: FakeFetch;
+    webStorage: FakeWebStorage;
+    listened: ReturnType<typeof stubListenedPage>;
+  } {
     const fetch = new FakeFetch();
     const webStorage = new FakeWebStorage();
     vi.stubGlobal("fetch", fetch.fetch);
@@ -146,12 +151,88 @@ describe("newWebCollector", () => {
     return { fetch, webStorage, listened: stubListenedPage() };
   }
 
-  it("adds no listener to the page: a send at hide would not finish before the page is gone", () => {
-    const { listened } = stubPage();
+  describe("when the page turns hidden", () => {
+    /** Returns a web collector on a fake clock over `stubPage`, and what `stubPage` returns. */
+    function hiddenPage(): ReturnType<typeof stubPage> & {
+      usage: Collector<"anonymous">;
+      clock: FakeClock;
+    } {
+      const page = stubPage();
+      const clock = new FakeClock("2026-10-29T10:00:00");
+      const usage = newWebCollector({
+        key: SITE_KEY,
+        version: "1.0.0",
+        endpoint: ENDPOINT,
+        mode: "anonymous",
+        clock,
+      });
+      return { ...page, usage, clock };
+    }
 
-    newWebCollector({ key: SITE_KEY, version: "1.0.0", endpoint: ENDPOINT, mode: "anonymous" });
+    it("sends what is queued at once, before the send delay, and listens to nothing else", async () => {
+      const { fetch, listened, usage, clock } = hiddenPage();
+      await usage.track("a");
+      await clock.advance(0);
+      await usage.track("b");
 
-    expect(listened).toEqual([]);
+      listened.document.hide();
+      await clock.advance(0);
+
+      expect(listened.added).toEqual(["visibilitychange"]);
+      expect(
+        fetch.requests.map((request) => request.envelope.events.map(({ name }) => name)),
+      ).toEqual([["a"], ["b"]]);
+    });
+
+    it("sends no event twice and posts nothing with nothing queued when the page turns hidden again", async () => {
+      const { fetch, listened, usage, clock } = hiddenPage();
+      await usage.track("a");
+      listened.document.hide();
+      await clock.advance(0);
+
+      listened.document.show();
+      listened.document.hide();
+      await clock.advance(SEND_DELAY_MS);
+
+      expect(fetch.eventNames).toEqual(["a"]);
+    });
+
+    it("sends nothing on show", async () => {
+      const { fetch, listened, usage, clock } = hiddenPage();
+      await usage.track("a");
+      await clock.advance(0);
+      await usage.track("b");
+
+      listened.document.show();
+      await clock.advance(SEND_DELAY_MS - 1);
+
+      expect(fetch.eventNames).toEqual(["a"]);
+    });
+
+    it("keeps the wait the intake asked for", async () => {
+      const { fetch, listened, usage, clock } = hiddenPage();
+      fetch.respondNextWith(503, 1, { "Retry-After": "10" });
+      await usage.track("a");
+      await clock.advance(0);
+
+      listened.document.hide();
+      await clock.advance(10_000 - 1);
+      expect(fetch.requests).toHaveLength(1);
+      await clock.advance(1);
+
+      expect(fetch.eventNames).toEqual(["a", "a"]);
+    });
+
+    it("sends no event tracked after an opt-out", async () => {
+      const { fetch, listened, usage, clock } = hiddenPage();
+      await usage.setState(AnalyticsState.OptedOut);
+      await usage.track("a");
+
+      listened.document.hide();
+      await clock.advance(SEND_DELAY_MS);
+
+      expect(fetch.eventNames).toEqual(["opted_out"]);
+    });
   });
 
   it("sends a web envelope with the primary language of the user and the page, over localStorage, and no id or browser", async () => {
