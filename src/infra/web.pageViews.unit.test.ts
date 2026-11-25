@@ -123,6 +123,19 @@ describe("trackPageViews", () => {
     ]);
   });
 
+  it("sends a hash route's pattern without its query, and /other for a hash outside the routes", async () => {
+    const page = stubPage();
+    const harness = newHashRouteHarness();
+
+    trackPageViews(harness.collector);
+    page.goToHash("#ideas/123?tab=x");
+    page.goToHash("#ideas/456?tab=y");
+    page.goToHash("#access_token=s3cr3t&token_type=bearer");
+    await harness.settle();
+
+    expect(pageViews(harness).map(([path]) => path)).toEqual(["/", "/ideas/:id", "/other"]);
+  });
+
   it("sends page_view only for another path on a platform whose collector reads no page", async () => {
     const page = stubPage();
     const harness = newHarness({ platform: Platform.Extension });

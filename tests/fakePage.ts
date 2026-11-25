@@ -71,12 +71,18 @@ export function newPageHarness(): Harness {
   return harness;
 }
 
-/** Returns a harness of a web app that keeps its routes in the hash and sends each route without its record's number. */
+/** The routes the web app of `newHashRouteHarness` sends as pages. */
+const HASH_ROUTES = new Set(["/", "/ideas", "/ideas/:id", "/projects", "/projects/:id"]);
+
+/** Returns the route pattern of `hash` if `HASH_ROUTES` lists it and `/other` if not, as the hash-route example in README does. */
+function routeOf(hash: string): string {
+  const route = `/${hash.replace(/^#\/?/, "").split("?")[0] ?? ""}`.replaceAll(/\/\d+/g, "/:id");
+  return HASH_ROUTES.has(route) ? route : "/other";
+}
+
+/** Returns a harness of a web app that keeps its routes in the hash and sends each route's pattern as its page. */
 export function newHashRouteHarness(): Harness {
-  return newHarness({
-    platform: Platform.Web,
-    getPage: () => ({ page: location.hash.replace(/^#\/?/, "/").replaceAll(/\/\d+/g, "/:id") }),
-  });
+  return newHarness({ platform: Platform.Web, getPage: () => ({ page: routeOf(location.hash) }) });
 }
 
 /** A visible document with a referrer, which takes listeners as a page's does and which a test can hide and show. */

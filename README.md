@@ -237,18 +237,22 @@ const analytics = newWebCollector({ key, version, endpoint, mode: "anonymous" })
 trackPageViews(analytics);
 ```
 
-A web app that keeps its routes in the hash, such as `#/ideas/123`, sends as its page the route with `:id` in place of the record's number, so a move between records of one route sends no `page_view`. A hash can carry a secret, as an OAuth redirect's `#access_token=…` does, and a `getPage` that reads the hash sends it as the page, so a router that gets one maps the hash to its route pattern instead:
+A web app that keeps its routes in the hash, such as `#/ideas/123`, sends its route pattern as the page. The pattern has `:id` in place of the record's number and leaves out the query, so a move between records of one route sends no `page_view`. A hash can carry a secret, as an OAuth redirect's `#access_token=…` does, so this `getPage` sends only the routes in its list and `/other` for any other hash:
 
 ```ts
+const routes = new Set(["/", "/ideas", "/ideas/:id", "/projects", "/projects/:id"]);
+
+function routeOf(hash: string): string {
+  const route = `/${hash.replace(/^#\/?/, "").split("?")[0] ?? ""}`.replaceAll(/\/\d+/g, "/:id");
+  return routes.has(route) ? route : "/other";
+}
+
 const analytics = newWebCollector({
   key,
   version,
   endpoint,
   mode: "anonymous",
-  getPage: () => ({
-    page: location.hash.replace(/^#\/?/, "/").replaceAll(/\/\d+/g, "/:id"),
-    referrer: document.referrer,
-  }),
+  getPage: () => ({ page: routeOf(location.hash), referrer: document.referrer }),
 });
 trackPageViews(analytics);
 ```
