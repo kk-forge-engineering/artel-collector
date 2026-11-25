@@ -223,7 +223,8 @@ An extension imports `infra/chrome` only in its entrypoints, the scripts that st
 - `newLocalStorageAdapter()` returns a `storage` over `localStorage`. Every script of the origin can read it, the queued events with their `id`, the last id and the install id included, and no other storage of the origin hides them from its scripts. A site that runs untrusted scripts uses an anonymous channel.
 - `newWebLock()` returns a `lock` over the Web Lock named `artel`, shared by the tabs and workers of one origin. Without Web Locks, operations run unguarded.
 - `pageFields()` gives the page's address without its query string and fragment, and `document.referrer`. `newWebCollector`'s default `getPage` takes it, and the collector shapes both as "Options" describes under `getPage`.
-- `trackPageViews(collector)` sends `page_view` for the page now and for each later navigation: `history.pushState` and `replaceState`, `popstate`, and the Navigation API's `currententrychange` where the browser has it. A navigation that keeps `location.pathname` sends none. So a change of the query or the hash alone sends none, and a router that keeps its routes in the hash gets one `page_view` per page load. A navigation that both `pushState` and the Navigation API report sends one. Two trackers of one collector each send their own, which the collector of platform `web` takes as one, since it sends no `page_view` of the page its last one sent. A tracker counts a path whether or not the collector records its `page_view`, so a page loaded in the `opted_out` state sends a `page_view` at the first navigation to another path after the user leaves that state. Leaving `opted_out` sends none by itself. `page_view` is a system event, which the intake counts without the product's allowlist. It returns the function that stops it. Once every tracker stopped, in any order, `history` is as they found it: a method the page inherited from `History.prototype` is inherited again. A product that wraps a method after the tracker keeps its wrapper, and the stopped tracker's wrapper under it stays and only passes calls on.
+- `trackPageViews(collector)` sends `page_view` for the page now and for each later navigation: `history.pushState` and `replaceState`, `popstate`, `hashchange`, and the Navigation API's `currententrychange` where the browser has it. By the HTML standard a change of the hash, from a link or from setting `location.hash`, fires `popstate` and then `hashchange`. The tracker listens to `hashchange` as well, for a browser that skips the `popstate`. A navigation sends a `page_view` only when it leads to another page, the page the collector would send, as `getPage` gives it. So a navigation that several of these events report sends one. With the default `getPage` the page is the path, so a change of the query or the hash alone sends none. A router that keeps its routes in the hash passes a `getPage` that reads the route from the hash, as below, and gets a `page_view` for each route. Where the collector reads no page, as on another platform than `web`, or `getPage` gives none, the page is `location.pathname`. The trackers of one collector and its calls of `trackPageView` share the last page, so two trackers send one `page_view` per navigation, and a navigation back to the page a call left sends one. They count a page whether or not the collector records its `page_view`, so a page loaded in the `opted_out` state sends a `page_view` at the first navigation to another page after the user leaves that state. A tracker sends the page it starts on even when another tracker of the collector counted it, and the collector drops it if its last recorded `page_view` sent that page. To read the page, the tracker calls `getPage` at each of these events, and `trackPageView` calls it once more than the `page_view` itself does. Leaving `opted_out` sends none by itself. `page_view` is a system event, which the intake counts without the product's allowlist. It returns the function that stops it. Once every tracker stopped, in any order, `history` is as they found it: a method the page inherited from `History.prototype` is inherited again. A product that wraps a method after the tracker keeps its wrapper, and the stopped tracker's wrapper under it stays and only passes calls on.
+- `trackPageView(collector)` sends `page_view` for the page `getPage` gives now, unless the last recorded `page_view` sent that page, whether a navigation or a call sent it. A router that changes the screen without changing the address calls it after each change, with a `getPage` that reads the screen. So does a product that decides itself when a view counts. It works with or without `trackPageViews`. It resolves once the collector queued or dropped the event, and never rejects.
 
 `newWebCollector` needs `localStorage`, which a Web Worker lacks, so a worker passes its own `storage`. Its default `getPage` sends no page where there is no `document` or `location`.
 
@@ -234,6 +235,37 @@ import { newWebCollector, trackPageViews } from "@kk-forge/artel-collector/infra
 
 const analytics = newWebCollector({ key, version, endpoint, mode: "anonymous" });
 trackPageViews(analytics);
+```
+
+A web app that keeps its routes in the hash, such as `#/ideas/123`, sends as its page the route with `:id` in place of the record's number, so a move between records of one route sends no `page_view`. A hash can carry a secret, as an OAuth redirect's `#access_token=…` does, and a `getPage` that reads the hash sends it as the page, so a router that gets one maps the hash to its route pattern instead:
+
+```ts
+const analytics = newWebCollector({
+  key,
+  version,
+  endpoint,
+  mode: "anonymous",
+  getPage: () => ({
+    page: location.hash.replace(/^#\/?/, "/").replaceAll(/\/\d+/g, "/:id"),
+    referrer: document.referrer,
+  }),
+});
+trackPageViews(analytics);
+```
+
+A web app that changes its screen without changing the address reads the screen in `getPage` and calls `trackPageView` after each change:
+
+```ts
+import { newWebCollector, trackPageView } from "@kk-forge/artel-collector/infra";
+
+const analytics = newWebCollector({
+  key,
+  version,
+  endpoint,
+  mode: "anonymous",
+  getPage: () => ({ page: `/${router.screen}`, referrer: document.referrer }),
+});
+router.afterEach(() => trackPageView(analytics));
 ```
 
 ### Chrome extension

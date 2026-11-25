@@ -10,6 +10,7 @@ import {
   type PageOptions,
 } from "../shared/collectorTypes.js";
 import { PAGE_VIEW, Platform } from "../shared/envelope.js";
+import { currentPage } from "../shared/page.js";
 import type { Lock } from "../shared/lock.js";
 import type { StorageAdapter } from "../shared/storage.js";
 
@@ -114,31 +115,64 @@ function pageFieldsWherePageIs(): PageFields | undefined {
 }
 
 /**
- * Sends `page_view` for the current page and after each navigation that changes `location.pathname`, and returns the
- * function that stops it. A query change alone sends none. Once every tracker stops, `history` is as they found it.
+ * Sends `page_view` for the current page and after each navigation to another page, and returns the function that
+ * stops it. The page is the one the collector would send, as its `getPage` gives it: with the default `getPage` the
+ * path, so a change of the query or the hash alone sends none, and with a `getPage` that reads a route from the hash, the
+ * route. Where the collector reads no page, as on another platform than web, or `getPage` gives none, the page is
+ * `location.pathname`. Once every tracker stops, `history` is as they found it.
  */
 export function trackPageViews(collector: Collector): () => void {
-  let lastPath: string | undefined;
   const onNavigation = (): void => {
-    // A navigation can reach the tracker twice, as a `pushState` and as a `currententrychange`.
-    if (location.pathname === lastPath) {
-      return;
+    // One navigation can reach the tracker up to three times: as a `pushState` and a `currententrychange`, or as a
+    // `popstate`, a `hashchange` and a `currententrychange`. All of them find the same page.
+    if (pageNow(collector) !== trackedPages.get(collector)) {
+      void trackPageView(collector);
     }
-    lastPath = location.pathname;
-    void collector.track(PAGE_VIEW);
   };
   const unwrapPushState = callAfter("pushState", onNavigation);
   const unwrapReplaceState = callAfter("replaceState", onNavigation);
+  // By the HTML standard, a browser reports a change of the hash as a `popstate` and then a `hashchange`. The tracker
+  // listens to `hashchange` as well, so a change still counts in a browser that skips the `popstate`.
   window.addEventListener("popstate", onNavigation);
+  window.addEventListener("hashchange", onNavigation);
   const navigation = navigationApi();
   navigation?.addEventListener("currententrychange", onNavigation);
-  onNavigation();
+  // The page it starts on counts even when an earlier tracker of the collector counted it, as one stopped and started
+  // again after the user left `opted_out`. The collector drops it if its last recorded `page_view` sent that page.
+  void trackPageView(collector);
   return () => {
     unwrapPushState();
     unwrapReplaceState();
     window.removeEventListener("popstate", onNavigation);
+    window.removeEventListener("hashchange", onNavigation);
     navigation?.removeEventListener("currententrychange", onNavigation);
   };
+}
+
+/**
+ * Sends `page_view` for the page `getPage` gives now, unless the last recorded `page_view` sent that page. A router
+ * that changes the screen without changing the address calls it after each change, with a `getPage` that reads the
+ * screen. It resolves once the collector has queued or dropped the event, and never rejects.
+ */
+export function trackPageView(collector: Collector): Promise<void> {
+  trackedPages.set(collector, pageNow(collector));
+  return collector.track(PAGE_VIEW);
+}
+
+/**
+ * The page of the last `page_view` each collector was asked for, whether or not it recorded one. The trackers of a
+ * collector and its calls of `trackPageView` share it, so a navigation back to a page after a call counts.
+ */
+const trackedPages = new WeakMap<Collector, string | undefined>();
+
+/**
+ * Returns the page a `page_view` of `collector` would send now, or `location.pathname` where it reads none, or
+ * undefined where there is no `location`.
+ */
+function pageNow(collector: Collector): string | undefined {
+  return (
+    currentPage(collector) ?? (typeof location === "undefined" ? undefined : location.pathname)
+  );
 }
 
 /** What `callAfter` keeps of one wrapper it installed. */

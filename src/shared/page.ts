@@ -1,4 +1,4 @@
-import type { PageFields } from "./collectorTypes.js";
+import type { Collector, PageFields } from "./collectorTypes.js";
 import { PAGE_VIEW } from "./envelope.js";
 import { pagePath, referrerHost } from "./pagePath.js";
 
@@ -22,6 +22,25 @@ interface PageView {
 export interface PageReader {
   read(name: string): PageRead;
   view(read: PageRead): PageView;
+  /** Returns the page a `page_view` would send now, or undefined for none. It reports nothing: the event reports it. */
+  pageNow(): string | undefined;
+}
+
+/** The page reader of each collector that reads pages, for `currentPage`. */
+const readers = new WeakMap<Collector, PageReader>();
+
+/** Notes `reader` as the page reader of `collector`, for `currentPage`. */
+export function notePageReader(collector: Collector, reader: PageReader): void {
+  readers.set(collector, reader);
+}
+
+/**
+ * Returns the page a `page_view` of `collector` would send now, as its `getPage` gives it. It returns undefined for a
+ * collector that reads no page, as one of another platform than web or a product's own `Collector`, and where `getPage`
+ * gives no page it can read.
+ */
+export function currentPage(collector: Collector): string | undefined {
+  return readers.get(collector)?.pageNow();
 }
 
 /**
@@ -39,15 +58,23 @@ export function newPageReader({
   let isPageViewRecorded = false;
   let lastViewedPage: string | undefined;
 
-  function fieldsOf(name: string, mayCarryReferrer: boolean): PageFields | undefined {
+  function fieldsOf({
+    name,
+    mayCarryReferrer,
+    report,
+  }: {
+    name: string;
+    mayCarryReferrer: boolean;
+    report: (error: unknown) => void;
+  }): PageFields | undefined {
     // A host outside TypeScript can return any value, or fields whose getters throw.
     try {
       const fields = getPage?.(name);
-      const page = stringField("page", fields?.page, reportError);
+      const page = stringField("page", fields?.page, report);
       const referrer = mayCarryReferrer
-        ? stringField("referrer", fields?.referrer, reportError)
+        ? stringField("referrer", fields?.referrer, report)
         : undefined;
-      const path = page === undefined ? undefined : checkedPath(page, reportError);
+      const path = page === undefined ? undefined : checkedPath(page, report);
       const host = referrer === undefined ? undefined : referrerHost(referrer);
       const isPageHost = page !== undefined && host === referrerHost(page);
       return {
@@ -55,13 +82,22 @@ export function newPageReader({
         ...(host !== undefined && !isPageHost && { referrer: host }),
       };
     } catch (error) {
-      reportError(error);
+      report(error);
       return undefined;
     }
   }
 
   return {
-    read: (name) => ({ name, fields: fieldsOf(name, name === PAGE_VIEW && !isPageViewRecorded) }),
+    pageNow: () =>
+      fieldsOf({ name: PAGE_VIEW, mayCarryReferrer: false, report: () => undefined })?.page,
+    read: (name) => ({
+      name,
+      fields: fieldsOf({
+        name,
+        mayCarryReferrer: name === PAGE_VIEW && !isPageViewRecorded,
+        report: reportError,
+      }),
+    }),
     view: ({ name, fields }) => {
       if (name !== PAGE_VIEW) {
         return { fields, isRepeatedView: false, recorded: () => undefined };
