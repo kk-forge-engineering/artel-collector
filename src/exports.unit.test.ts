@@ -25,6 +25,7 @@ import type {
 import * as infra from "./infra/exports.js";
 import type { DesktopCollectorOptions, WebCollectorOptions } from "./infra/exports.js";
 import * as extension from "./infra/chrome/exports.js";
+import * as health from "./infra/chrome/health.js";
 import type { ExtensionCollectorOptions } from "./infra/chrome/exports.js";
 import * as testing from "./testing/exports.js";
 import type { RecordedEvent, RecordingCollector } from "./testing/exports.js";
@@ -69,6 +70,9 @@ describe("the public API", () => {
         "newContentScriptCollector",
         "newExtensionCollector",
       ]),
+    );
+    expect(new Set(Object.keys(health))).toEqual(
+      new Set(["newHealthCollector", "newHealthContentScriptCollector"]),
     );
     expect(new Set(Object.keys(testing))).toEqual(
       new Set(["newRecordingCollector", "queuedEvents"]),

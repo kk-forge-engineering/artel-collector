@@ -66,7 +66,7 @@ export function uninstalledParams(
 }
 
 /** Returns the age capped at 25 months when `isExact`, and its bucket otherwise. */
-function ageInMonths(months: number, { isExact }: { isExact: boolean }): number {
+export function ageInMonths(months: number, { isExact }: { isExact: boolean }): number {
   return isExact ? clamp(months, MAX_AGE_MONTHS) : bucketOf(months, AGE_MONTHS_BUCKETS);
 }
 

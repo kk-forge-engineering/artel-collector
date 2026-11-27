@@ -1,4 +1,4 @@
-import { AnalyticsState, Mode } from "./collectorTypes.js";
+import { CollectionState, Mode } from "./collectorTypes.js";
 import { Platform, type Envelope, type IdKind } from "./envelope.js";
 import { primaryLanguage } from "./fields.js";
 
@@ -34,18 +34,18 @@ const MODE_RANKS = new Map<unknown, number>([
   [Mode.Identified, 2],
 ]);
 const STATE_RANKS = new Map<unknown, number>([
-  [AnalyticsState.OptedOut, 0],
-  [AnalyticsState.Anonymous, 0],
-  [AnalyticsState.Pseudonymous, 1],
-  [AnalyticsState.Identified, 2],
+  [CollectionState.OptedOut, 0],
+  [CollectionState.Anonymous, 0],
+  [CollectionState.Pseudonymous, 1],
+  [CollectionState.Identified, 2],
 ]);
 
-export function isAnalyticsState(value: unknown): value is AnalyticsState {
+export function isCollectionState(value: unknown): value is CollectionState {
   return STATE_RANKS.has(value);
 }
 
 /** Tells whether a channel of `mode` takes `state`: a state up to its mode. A mode that does not exist is anonymous. */
-export function channelTakes(mode: Mode, state: unknown): state is AnalyticsState {
+export function channelTakes(mode: Mode, state: unknown): state is CollectionState {
   return (STATE_RANKS.get(state) ?? Number.POSITIVE_INFINITY) <= (MODE_RANKS.get(mode) ?? 0);
 }
 
@@ -65,13 +65,13 @@ export function fieldsForState({
   browserLanguage,
   uiLanguage,
 }: {
-  state: AnalyticsState;
+  state: CollectionState;
   build: Build;
   browserLanguage: string | undefined;
   uiLanguage: string | undefined;
 }): StateFields {
   const idKind =
-    state === AnalyticsState.Pseudonymous || state === AnalyticsState.Identified
+    state === CollectionState.Pseudonymous || state === CollectionState.Identified
       ? state
       : undefined;
   const isNamed = idKind !== undefined;
@@ -79,7 +79,7 @@ export function fieldsForState({
     tag === undefined || isNamed ? tag : primaryLanguage(tag);
   const shapedBrowserLanguage = shape(browserLanguage);
   const shapedUiLanguage = shape(uiLanguage);
-  const recordsEvents = state !== AnalyticsState.OptedOut;
+  const recordsEvents = state !== CollectionState.OptedOut;
   return {
     recordsEvents,
     product: {

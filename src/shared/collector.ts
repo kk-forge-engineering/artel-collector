@@ -20,7 +20,8 @@ import {
 } from "./hostInput.js";
 import type { Clock } from "./clock.js";
 import { newChannelStorage } from "./storage.js";
-import { AnalyticsState, Mode, type Collector, type CollectorOptions } from "./collectorTypes.js";
+import { CollectionState, Mode, type Collector, type CollectorOptions } from "./collectorTypes.js";
+import { isHealthOperation, OPERATION } from "./health.js";
 import { acceptedEvent } from "./eventCheck.js";
 import { newInstallState } from "./installState.js";
 import { exclusive } from "./lock.js";
@@ -31,7 +32,7 @@ import {
   carriesPage,
   channelTakes,
   fieldsForState,
-  isAnalyticsState,
+  isCollectionState,
   type StateFields,
 } from "./stateFields.js";
 import type { Random } from "./random.js";
@@ -58,11 +59,14 @@ export function newCollectorOn({
   host,
   options,
   onNewDay,
+  healthErrorCodes,
 }: {
   host: Host;
   options: CollectorOptions;
   onNewDay: () => void;
+  healthErrorCodes?: ReadonlySet<string> | undefined;
 }): Collector {
+  const health = healthErrorCodes !== undefined;
   const product = checkedBuild(options);
   const { mode } = options;
   const { clock, random } = host;
@@ -73,12 +77,9 @@ export function newCollectorOn({
   const getId = options.mode === Mode.Identified ? usableId(options.getId, reportError) : undefined;
   const readBrowser =
     options.mode === Mode.Anonymous ? undefined : newBrowserReader(options.browser, reportError);
-  const browserLanguage = accepted(
-    "browserLanguage",
-    languageTag(options.browserLanguage),
-    isLanguage,
-    reportError,
-  );
+  const browserLanguage = health
+    ? undefined
+    : accepted("browserLanguage", languageTag(options.browserLanguage), isLanguage, reportError);
   const uiLanguage = accepted(
     "uiLanguage",
     languageTag(options.uiLanguage),
@@ -98,6 +99,9 @@ export function newCollectorOn({
     // The current state decides the id, so an envelope names no user once the state has left the one it was recorded
     // in. The state can change in this or another context after the lease.
     identify: () => lock(async () => identityIn(await currentFields())),
+    maySend: health
+      ? async () => isInstallDayKnown && (await currentState()) !== CollectionState.OptedOut
+      : undefined,
     giveBack: (items) => giveBack(items),
     sendDelayMs: sendDelayMsOf(options),
     clock,
@@ -176,7 +180,8 @@ export function newCollectorOn({
     if (idKind === undefined) {
       return undefined;
     }
-    const id = idKind === AnalyticsState.Pseudonymous ? await install.installId() : await getId?.();
+    const id =
+      idKind === CollectionState.Pseudonymous ? await install.installId() : await getId?.();
     if (id === undefined) {
       return undefined;
     }
@@ -207,7 +212,7 @@ export function newCollectorOn({
    * goes under the other state's id. Any other change stores first, so an opt-out stays, and the next run leaves the id
    * the stored state no longer has.
    */
-  async function storeState(previous: AnalyticsState, next: AnalyticsState): Promise<boolean> {
+  async function storeState(previous: CollectionState, next: CollectionState): Promise<boolean> {
     const hadId = fieldsIn(previous).idKind !== undefined;
     const isSwitch = hadId && fieldsIn(next).idKind !== undefined;
     if (isSwitch) {
@@ -227,37 +232,45 @@ export function newCollectorOn({
    */
   async function settleStoredState(): Promise<void> {
     const stored = await install.state();
-    const isUntaken = isAnalyticsState(stored) && !takes(stored);
+    const isUntaken = isCollectionState(stored) && !takes(stored);
     if (isUntaken) {
-      await install.setState(AnalyticsState.Anonymous);
-      await install.endSession();
+      await install.setState(CollectionState.Anonymous);
     }
     const state = await currentState();
-    if (isUntaken || (fieldsIn(state).idKind === undefined && isUsableId(await install.lastId()))) {
-      await leaveIdentity();
+    if (fieldsIn(state).idKind === undefined) {
+      await install.endSession();
     }
-    if (state === AnalyticsState.OptedOut) {
+    await giveBack(await outbox.discardIncompatible(healthErrorCodes));
+    if (isUntaken || (fieldsIn(state).idKind === undefined && isUsableId(await install.lastId()))) {
+      if (health) {
+        await install.dropInstallId();
+        await install.setLastId("");
+      } else {
+        await leaveIdentity();
+      }
+    }
+    if (state === CollectionState.OptedOut) {
       await giveBack(await outbox.discard());
     }
   }
 
-  async function currentState(): Promise<AnalyticsState> {
+  async function currentState(): Promise<CollectionState> {
     const stored = await install.state();
     // The function reads a state this channel does not take as anonymous. Such a state stays after the product changes
     // its mode.
-    return takes(stored) ? stored : AnalyticsState.Anonymous;
+    return takes(stored) ? stored : CollectionState.Anonymous;
   }
 
-  function takes(state: unknown): state is AnalyticsState {
+  function takes(state: unknown): state is CollectionState {
     return channelTakes(mode, state);
   }
 
   /** Resolves to what the current state, or `state`, sends. */
-  async function currentFields(state?: AnalyticsState): Promise<StateFields> {
+  async function currentFields(state?: CollectionState): Promise<StateFields> {
     return fieldsIn(state ?? (await currentState()));
   }
 
-  function fieldsIn(state: AnalyticsState): StateFields {
+  function fieldsIn(state: CollectionState): StateFields {
     return fieldsForState({ state, build: product, browserLanguage, uiLanguage });
   }
 
@@ -297,7 +310,7 @@ export function newCollectorOn({
     let dropped: QueuedEnvelope[];
     let isNewDay = false;
     try {
-      const stamp = await install.stamp(clock.now());
+      const stamp = await install.stamp(clock.now(), identity !== undefined);
       isNewDay = stamp.first.includes(Period.Day);
       event = newEvent({
         name,
@@ -315,7 +328,7 @@ export function newCollectorOn({
           key: options.key,
           ...fields.product,
           ...(browser !== undefined && { browser }),
-          session: stamp.session,
+          ...(stamp.session !== undefined && { session: stamp.session }),
           ...id,
         },
         event,
@@ -347,10 +360,9 @@ export function newCollectorOn({
    */
   async function recordOptOut(): Promise<void> {
     await install.endSession();
-    const fields = await currentFields(AnalyticsState.OptedOut);
-    const session = await install.session(clock.now());
+    const fields = await currentFields(CollectionState.OptedOut);
     const dropped = await outbox.add(
-      { key: options.key, ...fields.product, session },
+      { key: options.key, ...fields.product },
       { name: LifecycleEvent.OptedOut, day: formatDay(localDateAt(clock.now())) },
     );
     await giveBack(dropped);
@@ -358,8 +370,9 @@ export function newCollectorOn({
 
   async function flush(): Promise<void> {
     // Waiting for the queue of operations first lets an event tracked just before flush join this send.
-    await serialize(async () => undefined, undefined);
-    await outbox.send();
+    if (await serialize(async () => true, false)) {
+      await outbox.send();
+    }
   }
 
   /**
@@ -382,6 +395,10 @@ export function newCollectorOn({
       if (event === undefined) {
         return;
       }
+      if (health && (name !== OPERATION || !isHealthOperation(event.params, healthErrorCodes))) {
+        reportError(new TypeError("artel: expected a health operation with a result"));
+        return;
+      }
       const page = pageOf(name);
       await serialize(async () => {
         // The check and the mark run in the lock, so of two calls in quick turn only the first goes.
@@ -397,7 +414,7 @@ export function newCollectorOn({
       }, false);
     },
 
-    // The opted_out state takes no install mark. A user who turns analytics back on still sends `installed`.
+    // The opted_out state takes no install mark. A user who starts collection again still sends `installed`.
     installed: async () => {
       const page = pageOf(LifecycleEvent.Installed);
       const takeMark = (productVersion: string): Promise<boolean> =>
@@ -426,18 +443,23 @@ export function newCollectorOn({
           return false;
         }
         const previous = await currentState();
+        if (health && previous === CollectionState.OptedOut) {
+          await giveBack(await outbox.discard());
+        }
         if (previous === next) {
           return false;
         }
         const hadId = await storeState(previous, next);
-        if (next === AnalyticsState.OptedOut) {
+        if (next === CollectionState.OptedOut) {
           // Events from before the opt-out that have not gone yet never go.
           await giveBack(await outbox.discard());
-          await recordOptOut();
+          if (!health) {
+            await recordOptOut();
+          }
         }
         // A new session keeps the intake from tying together events from before and after the change.
         await install.endSession();
-        return hadId || next === AnalyticsState.OptedOut;
+        return hadId || (!health && next === CollectionState.OptedOut);
       }, false);
       // The forget request and the opted_out go at once.
       if (hasRequest) {
@@ -445,7 +467,7 @@ export function newCollectorOn({
       }
     },
 
-    getState: () => serialize(currentState, AnalyticsState.Anonymous),
+    getState: () => serialize(currentState, CollectionState.Anonymous),
 
     flush,
 
@@ -455,7 +477,7 @@ export function newCollectorOn({
         reportError(new TypeError("artel: forget takes an id of 1 to 64 characters"));
         return;
       }
-      await serialize(async () => {
+      const hasRequest = await serialize(async () => {
         // The intake deletes the id's events, so each envelope of the id gives back its marks, sent or not.
         await giveBack(await outbox.forget(id));
         // The events that wait for an id after the last user are that user's, so they go with it. The next id counts
@@ -464,8 +486,11 @@ export function newCollectorOn({
           await giveBack(await outbox.discardIdentified());
           await install.forgetLastId();
         }
-      }, undefined);
-      await outbox.send();
+        return true;
+      }, false);
+      if (hasRequest) {
+        await outbox.send();
+      }
     },
 
     uninstallParams: () =>

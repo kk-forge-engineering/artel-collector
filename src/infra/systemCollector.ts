@@ -18,14 +18,18 @@ export function newCollector(options: CollectorOptions): Collector {
  * Returns a collector, as `newCollector` does, that calls `onNewDay` inside its lock each time it queues the first
  * event of a local day. That event adds the day to the active days.
  */
-export function newCollectorNotingDays(options: CollectorOptions, onNewDay: () => void): Collector {
+export function newCollectorNotingDays(
+  options: CollectorOptions,
+  onNewDay: () => void,
+  healthErrorCodes?: ReadonlySet<string>,
+): Collector {
   // The transport's timeout runs on the system clock even when the product passes its own.
   const host = {
     clock: options.clock ?? systemClock,
     random: systemRandom,
     newTransport: newHttpTransport,
   };
-  return newCollectorOn({ host, options, onNewDay });
+  return newCollectorOn({ host, options, onNewDay, healthErrorCodes });
 }
 
 /**

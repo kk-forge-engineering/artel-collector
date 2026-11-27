@@ -1,6 +1,6 @@
 import type { Clock } from "../shared/clock.js";
 import { systemClock } from "../infra/system.js";
-import { AnalyticsState, Mode, type Collector } from "../shared/collectorTypes.js";
+import { CollectionState, Mode, type Collector } from "../shared/collectorTypes.js";
 import type { EventParams } from "../shared/envelope.js";
 import { acceptedEvent } from "../shared/eventCheck.js";
 import { isUsableId, quoted, reportTo } from "../shared/hostInput.js";
@@ -42,12 +42,12 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
   const channelMode: Mode = mode ?? Mode.Anonymous;
   const reportError = (error: unknown): void => reportTo(onError, error);
   const events: RecordedEvent[] = [];
-  let state: AnalyticsState = AnalyticsState.Anonymous;
+  let state: CollectionState = CollectionState.Anonymous;
   let isInstalled = false;
   let isVersionMarked = false;
   const throttle = newThrottle();
   const record = (name: string, params?: EventParams): boolean => {
-    if (state === AnalyticsState.OptedOut) {
+    if (state === CollectionState.OptedOut) {
       return false;
     }
     events.push({ name, ...(params !== undefined && { params }) });
@@ -67,22 +67,22 @@ export function newRecordingCollector<M extends Mode = typeof Mode.Anonymous>(
       }
     },
     installed: async () => {
-      if (!isInstalled && state !== AnalyticsState.OptedOut) {
+      if (!isInstalled && state !== CollectionState.OptedOut) {
         isInstalled = true;
         isVersionMarked = true;
         record("installed");
       }
     },
     updated: async () => {
-      if (!isVersionMarked && state !== AnalyticsState.OptedOut) {
+      if (!isVersionMarked && state !== CollectionState.OptedOut) {
         isVersionMarked = true;
         record("updated");
       }
     },
     setState: async (next) => {
       if (channelTakes(channelMode, next)) {
-        if (next === AnalyticsState.OptedOut) {
-          record(AnalyticsState.OptedOut);
+        if (next === CollectionState.OptedOut) {
+          record(CollectionState.OptedOut);
         }
         state = next;
       } else {

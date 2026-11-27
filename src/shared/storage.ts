@@ -5,6 +5,7 @@
 export interface StorageAdapter {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
+  remove?(key: string): Promise<void>;
 }
 
 /**
@@ -18,6 +19,9 @@ export function newMemoryStorage(): StorageAdapter {
     set: async (key, value) => {
       items.set(key, value);
     },
+    remove: async (key) => {
+      items.delete(key);
+    },
   };
 }
 
@@ -30,5 +34,10 @@ export function newChannelStorage(storage: StorageAdapter, key: string): Storage
   return {
     get: (name) => storage.get(prefix + name),
     set: (name, value) => storage.set(prefix + name, value),
+    ...(storage.remove !== undefined && {
+      remove: async (name: string) => {
+        await storage.remove?.(prefix + name);
+      },
+    }),
   };
 }

@@ -47,7 +47,7 @@ export interface EventStamp {
   installDay: CalendarDate;
   /** The periods this event is the first of. */
   first: Period[];
-  session: string;
+  session?: string;
 }
 
 /**
@@ -55,7 +55,7 @@ export interface EventStamp {
  * each method reads and then writes.
  */
 interface InstallState {
-  /** Returns the stored analytics state, or undefined when the user never chose one. */
+  /** Returns the stored collection state, or undefined when the user never chose one. */
   state(): Promise<string | undefined>;
   setState(state: string): Promise<void>;
   /**
@@ -86,12 +86,10 @@ interface InstallState {
   /** Returns the stored install day, or stores and returns `today` when none is stored. */
   installDayOr(today: CalendarDate): Promise<CalendarDate>;
   /**
-   * Takes the first-of-period marks for an event at `timestamp`, counts a new active day and renews the session. A
+   * Takes the first-of-period marks for an event at `timestamp`, counts a new active day and renews a named session. A
    * failure gives back the marks it took.
    */
-  stamp(timestamp: number): Promise<EventStamp>;
-  /** Renews the session for an event at `timestamp` that takes no mark and counts no active day. */
-  session(timestamp: number): Promise<string>;
+  stamp(timestamp: number, hasId: boolean): Promise<EventStamp>;
   /** Returns the number of local days with a queued or sent event. */
   activeDays(): Promise<number>;
 }
@@ -191,10 +189,12 @@ export function newInstallState({
    * Returns the session id. A session ends after the idle time without events or at local midnight. The midnight end
    * keeps a user who never pauses from carrying one session for days, which would identify the device.
    */
-  async function currentSession(timestamp: number, isNewDay: boolean): Promise<string> {
+  async function currentSession(timestamp: number): Promise<string> {
     const stored = await storage.get(StorageKey.Session);
     const lastSeen = Number(await storage.get(StorageKey.SessionSeen));
     const isIdle = !(timestamp - lastSeen < sessionIdleMs);
+    const isNewDay =
+      !isIdle && formatDay(localDateAt(lastSeen)) !== formatDay(localDateAt(timestamp));
     const session =
       stored === undefined || stored === "" || isIdle || isNewDay ? newSessionId(random) : stored;
     await storage.set(StorageKey.Session, session);
@@ -236,8 +236,18 @@ export function newInstallState({
 
     setState: (state) => storage.set(StorageKey.State, state),
 
-    // An empty session reads as none, so the next event takes a new one. The storage has no remove.
-    endSession: () => storage.set(StorageKey.Session, ""),
+    endSession: async () => {
+      for (const key of [StorageKey.Session, StorageKey.SessionSeen]) {
+        const stored = await storage.get(key);
+        if (stored !== undefined && stored !== "") {
+          if (storage.remove === undefined) {
+            await storage.set(key, "");
+          } else {
+            await storage.remove(key);
+          }
+        }
+      }
+    },
 
     takeInstall: async (version) => {
       const mark = await storage.get(StorageKey.Installed);
@@ -260,7 +270,7 @@ export function newInstallState({
 
     installDayOr,
 
-    stamp: async (timestamp) => {
+    stamp: async (timestamp, hasId) => {
       const today = localDateAt(timestamp);
       const installDay = await installDayOr(today);
       const first: Period[] = [];
@@ -270,15 +280,13 @@ export function newInstallState({
         if (isNewDay) {
           await countActiveDay(formatDay(today));
         }
-        return { today, installDay, first, session: await currentSession(timestamp, isNewDay) };
+        const session = hasId ? await currentSession(timestamp) : undefined;
+        return { today, installDay, first, ...(session !== undefined && { session }) };
       } catch (error) {
         await giveBackFirstMarks(today, first);
         throw error;
       }
     },
-
-    // The only caller ends the session first, so the session it renews is always a new one.
-    session: (timestamp) => currentSession(timestamp, false),
 
     activeDays: async () => (await readActiveDays()).length,
   };

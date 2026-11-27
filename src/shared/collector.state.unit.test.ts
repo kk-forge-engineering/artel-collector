@@ -55,11 +55,12 @@ describe("the analytics state", () => {
     const [optOut, after] = harness.fetch.requests;
     expect(optOut?.envelope).not.toHaveProperty("id");
     expect(optOut?.envelope).not.toHaveProperty("browser");
-    expect(optOut?.envelope.session).not.toBe(after?.envelope.session);
+    expect(optOut?.envelope).not.toHaveProperty("session");
+    expect(after?.envelope.session).toBeDefined();
   });
 
-  it("sends opted_out under a new session, apart from the events sent before it", async () => {
-    const harness = newHarness();
+  it("sends opted_out without a session after an identified event", async () => {
+    const harness = newHarness({ getId: () => USER_ID });
     await harness.collector.track("before");
     await harness.settle();
 
@@ -68,7 +69,8 @@ describe("the analytics state", () => {
 
     const [before, optOut] = harness.fetch.requests.map((request) => request.envelope.session);
     expect(harness.fetch.eventNames).toEqual(["before", "opted_out"]);
-    expect(optOut).not.toBe(before);
+    expect(before).toBeDefined();
+    expect(optOut).toBeUndefined();
   });
 
   it("sends opted_out at once, without waiting for the send delay", async () => {

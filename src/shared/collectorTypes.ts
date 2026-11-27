@@ -18,9 +18,9 @@ export const Mode = {
 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
-/** The user's analytics state, which the collector stores and which decides what it sends. Users start anonymous. */
-export const AnalyticsState = {
-  /** Sends nothing. Switching to it sends one `opted_out`, with no id or browser, and drops what was not sent. */
+/** The user's collection state, which the collector stores and which decides what it sends. Users start anonymous. */
+export const CollectionState = {
+  /** Sends nothing. In an ordinary mode, switching to it sends one `opted_out` and drops pending events. */
   OptedOut: "opted_out",
   /** Sends events with no id or browser, the primary languages only and coarse ages. Needs no consent. */
   Anonymous: "anonymous",
@@ -35,16 +35,16 @@ export const AnalyticsState = {
    */
   Identified: "identified",
 } as const;
-export type AnalyticsState = (typeof AnalyticsState)[keyof typeof AnalyticsState];
+export type CollectionState = (typeof CollectionState)[keyof typeof CollectionState];
 
 /** The states a collector of channel mode `M` takes: those up to its mode. */
 export type StateOf<M extends Mode> = M extends typeof Mode.Identified
-  ? AnalyticsState
+  ? CollectionState
   : M extends typeof Mode.Pseudonymous
-    ? Exclude<AnalyticsState, typeof AnalyticsState.Identified>
+    ? Exclude<CollectionState, typeof CollectionState.Identified>
     : Exclude<
-        AnalyticsState,
-        typeof AnalyticsState.Pseudonymous | typeof AnalyticsState.Identified
+        CollectionState,
+        typeof CollectionState.Pseudonymous | typeof CollectionState.Identified
       >;
 
 /**
@@ -197,7 +197,7 @@ export interface Collector<M extends Mode = Mode> {
    */
   updated(): Promise<void>;
   /**
-   * Stores the user's analytics state and starts a new session. Switching to `opted_out` drops what was not sent,
+   * Stores the user's collection state and ends any session. Switching to `opted_out` drops what was not sent,
    * except an earlier `opted_out`, and sends one `opted_out`, at once or at the end of a retry wait that is running.
    * Switching from `pseudonymous` or `identified` forgets the last id, as `forget` does, and drops the queued events
    * that wait for an id. Switching from `pseudonymous` also deletes the install id. A dropped event that no request
@@ -208,7 +208,7 @@ export interface Collector<M extends Mode = Mode> {
    * Resolves to the stored state, `anonymous` until the user chose. A storage failure resolves to `anonymous` too,
    * whatever the user chose, and goes to `onError`.
    */
-  getState(): Promise<AnalyticsState>;
+  getState(): Promise<CollectionState>;
   /**
    * Sends what is queued now, or once the retry wait is over. The collector sends within the send delay without it, so a
    * product calls it only to send sooner.

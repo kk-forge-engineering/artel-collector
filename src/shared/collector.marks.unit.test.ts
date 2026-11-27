@@ -120,7 +120,7 @@ describe("marks of events the collector drops", () => {
   });
 
   it("keeps the marks of an envelope that went in a request when the 20-envelope cap drops it", async () => {
-    const { harness, outage } = newHarnessWithOutage();
+    const { harness, outage } = newHarnessWithOutage({ getId: () => "alice" });
     await harness.collector.installed();
     await harness.settle();
     for (let index = 0; index < 20; index++) {
@@ -174,7 +174,8 @@ describe("marks of events the collector drops", () => {
         await memory.set(key, value);
       },
     };
-    const harness = newHarness({ storage });
+    await memory.set(storageKey("state"), AnalyticsState.Identified);
+    const harness = newHarness({ storage, getId: () => "alice" });
 
     await harness.collector.installed();
     await harness.collector.installed();
@@ -187,10 +188,10 @@ describe("marks of events the collector drops", () => {
   });
 
   it("never drops an opted_out for the 20-envelope cap, but the oldest envelope after it", async () => {
-    const { harness, outage } = newHarnessWithOutage();
+    const { harness, outage } = newHarnessWithOutage({ getId: () => "alice" });
     await harness.collector.track("before");
     await harness.collector.setState(AnalyticsState.OptedOut);
-    await harness.collector.setState(AnalyticsState.Anonymous);
+    await harness.collector.setState(AnalyticsState.Identified);
     for (let index = 0; index < 20; index++) {
       await harness.clock.advance(11 * 60_000);
       await harness.collector.track(`opened_${index}`);
