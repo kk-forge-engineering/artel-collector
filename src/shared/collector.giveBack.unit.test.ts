@@ -53,7 +53,7 @@ describe("marks after a failure while recording", () => {
       },
     };
     // Twenty envelopes wait, the oldest an installed no request carried. The next new envelope pushes it out.
-    const fields = { ...FIELDS, browser_language: "pt", ui_language: "zh" };
+    const fields = { ...FIELDS, version: "4.1.0", browser_language: "pt", ui_language: "zh" };
     const planted = [
       ...queued(1, fields, { name: "installed", day: DAY }),
       ...queued(19, fields, { name: "b", day: DAY }, 1),

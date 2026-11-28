@@ -293,7 +293,6 @@ describe("batch key", () => {
       key: KEY,
       platform: "extension",
       version: VERSION,
-      session: "k3j9x2m1qa0b",
       batch: "0123456789abcdef",
       events: [
         { name: "a", day: "2026-10-27" },
@@ -345,6 +344,7 @@ describe("batch key", () => {
     let answerFirst: (() => void) | undefined;
     const sent: string[][] = [];
     const harness = newHarness({
+      getId: () => USER_ID,
       transport: async (body) => {
         sent.push(eventNamesIn(body));
         if (sent.length === 1) {

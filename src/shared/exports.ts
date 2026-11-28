@@ -1,7 +1,7 @@
 export { detectBrowser, BrowserName, type Browser, type NavigatorFields } from "./browser.js";
 export {
   ActiveDaysBucket,
-  AnalyticsState,
+  CollectionState as AnalyticsState,
   Mode,
   type Collector,
   type CollectorOptions,

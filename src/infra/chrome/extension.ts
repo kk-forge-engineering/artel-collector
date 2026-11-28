@@ -4,7 +4,7 @@ import { systemClock } from "../system.js";
 import { sendDelayMsOf } from "../../shared/collector.js";
 import { newCollectorNotingDays } from "../systemCollector.js";
 import {
-  AnalyticsState,
+  CollectionState,
   Mode,
   type Collector,
   type CommonOptions,
@@ -56,7 +56,7 @@ export type ExtensionCollectorOptions = Omit<CommonOptions, "storage" | "version
 
 /**
  * Returns a collector for an extension's worker or page. It needs the `storage` permission. In the worker it first
- * closes the storage to content scripts, which could otherwise change the user's analytics state and the queue. The
+ * closes the storage to content scripts, which could otherwise change the user's collection state and the queue. The
  * worker's collector also sends `installed` and `updated` at Chrome's `onInstalled`, and tracks the events content
  * scripts forward. Chrome needs these listeners registered synchronously at the worker's top level on every start of
  * the worker, so the product builds it there. The worker's collector also sends what the pages queue, even after the
@@ -66,14 +66,23 @@ export function newExtensionCollector<M extends Mode>(
   options: ExtensionCollectorOptions & { mode: M },
 ): Collector<M>;
 export function newExtensionCollector(options: ExtensionCollectorOptions): Collector {
+  return newExtensionCollectorOn(options);
+}
+
+export function newExtensionCollectorOn(
+  options: ExtensionCollectorOptions,
+  healthErrorCodes?: ReadonlySet<string>,
+): Collector {
   const isWorker = isServiceWorker();
-  const closed = isWorker ? closeToContentScripts(options.onError) : Promise.resolve();
+  const isHealth = healthErrorCodes !== undefined;
+  const closed =
+    isWorker || isHealth ? closeToContentScripts(options.onError) : Promise.resolve(true);
   const defaults = {
     platform: Platform.Extension,
     // The function reads each default only when the caller leaves the option out, so outside an extension it needs only
     // `version`.
     version: options.version ?? chromeApi().runtime.getManifest().version,
-    storage: after(closed, options.storage ?? newChromeStorageAdapter()),
+    storage: after(closed, options.storage ?? newChromeStorageAdapter(), isHealth),
     lock: options.lock ?? newWebLock(),
     browserLanguage: options.browserLanguage ?? navigator.language,
   };
@@ -83,14 +92,19 @@ export function newExtensionCollector(options: ExtensionCollectorOptions): Colle
   const onNewDay = (): void => void refreshUninstallPage?.();
   const built =
     options.mode === Mode.Anonymous
-      ? newCollectorNotingDays({ ...options, ...defaults }, onNewDay)
+      ? newCollectorNotingDays({ ...options, ...defaults }, onNewDay, healthErrorCodes)
       : newCollectorNotingDays(
           { ...options, ...defaults, browser: options.browser ?? (() => detectBrowser(navigator)) },
           onNewDay,
         );
-  const { collector, refresh } = withUninstallPage(built, options.uninstallPage, options.onError);
+  const { collector, refresh } = isHealth
+    ? { collector: built, refresh: undefined }
+    : withUninstallPage(built, options.uninstallPage, options.onError);
   refreshUninstallPage = refresh;
   if (isWorker) {
+    if (isHealth) {
+      void setHealthUninstallPage(options.uninstallPage ?? "", options.onError);
+    }
     listenAsWorker(collector, {
       queueKey: `artel.${options.key}.${QUEUE_KEY}`,
       sendDelayMs: sendDelayMsOf(options),
@@ -184,7 +198,7 @@ function withUninstallPage(
       ...collector,
       setState: async (state) => {
         changes++;
-        if (state === AnalyticsState.OptedOut || state === AnalyticsState.Anonymous) {
+        if (state === CollectionState.OptedOut || state === CollectionState.Anonymous) {
           // A change of state can take 30 seconds or more, as for the opted_out or forget request it sends, and the
           // page must not carry the earlier state's fields meanwhile. The page alone carries fewer than any state's.
           await write(async () => undefined);
@@ -217,9 +231,11 @@ function isServiceWorker(): boolean {
 
 /**
  * Lets only the extension's own pages and worker read and write `chrome.storage.local`, and resolves once Chrome has
- * answered. It never rejects. A failure, such as a Chrome without the call, goes to `onError`.
+ * answered. Resolves to false on failure and reports it to `onError`.
  */
-async function closeToContentScripts(onError: ((error: Error) => void) | undefined): Promise<void> {
+async function closeToContentScripts(
+  onError: ((error: Error) => void) | undefined,
+): Promise<boolean> {
   try {
     const local = chromeApi().storage.local;
     if (typeof local.setAccessLevel !== "function") {
@@ -228,22 +244,50 @@ async function closeToContentScripts(onError: ((error: Error) => void) | undefin
       );
     }
     await local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+    return true;
+  } catch (error) {
+    reportTo(onError, error);
+    return false;
+  }
+}
+
+async function setHealthUninstallPage(
+  page: string,
+  onError: ((error: Error) => void) | undefined,
+): Promise<void> {
+  try {
+    await chromeApi().runtime.setUninstallURL(page);
   } catch (error) {
     reportTo(onError, error);
   }
 }
 
 /** Returns `storage` whose every read and write waits for `ready` first. */
-function after(ready: Promise<void>, storage: StorageAdapter): StorageAdapter {
+function after(
+  ready: Promise<boolean>,
+  storage: StorageAdapter,
+  required: boolean,
+): StorageAdapter {
+  const wait = async () => {
+    if (!(await ready) && required) {
+      throw new Error("artel: health reports require trusted extension storage");
+    }
+  };
   return {
     get: async (key) => {
-      await ready;
+      await wait();
       return storage.get(key);
     },
     set: async (key, value) => {
-      await ready;
+      await wait();
       await storage.set(key, value);
     },
+    ...(storage.remove !== undefined && {
+      remove: async (key: string) => {
+        await wait();
+        await storage.remove?.(key);
+      },
+    }),
   };
 }
 
@@ -260,6 +304,7 @@ export function newChromeStorageAdapter(): StorageAdapter {
     set: async (key, value) => {
       await chromeApi().storage.local.set({ [key]: value });
     },
+    remove: (key) => chromeApi().storage.local.remove(key),
   };
 }
 
@@ -279,13 +324,13 @@ export async function forwardTrack(name: string, params?: EventParams): Promise<
   }
 }
 
-/** The part of the collector a content script uses: it tracks events, and the worker keeps the analytics state. */
+/** The part of the collector a content script uses: it tracks events, and the worker keeps the collection state. */
 export type ContentScriptCollector = Pick<Collector, "track">;
 
 /**
  * Returns the collector of a content script. Its `track` applies a call's `throttleMs` in the script's memory, by
  * `clock`, then hands the event to the worker with `forwardTrack`. The worker checks, queues and sends it under the
- * user's analytics state, which a content script can neither read nor change. It reads no storage, needs no key,
+ * user's collection state, which a content script can neither read nor change. It reads no storage, needs no key,
  * version or endpoint, never throws, and drops a call with a bad `throttleMs` without a report, having no `onError`.
  */
 export function newContentScriptCollector({
@@ -411,6 +456,7 @@ interface ChromeApi {
     local: {
       get(key: string): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove(key: string): Promise<void>;
       /** Chrome 102 and later have `setAccessLevel`. */
       setAccessLevel?: (options: { accessLevel: string }) => Promise<void>;
     };

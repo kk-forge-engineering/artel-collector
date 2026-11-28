@@ -80,6 +80,7 @@ export function newLocalStorageAdapter(): StorageAdapter {
     set: async (key, value) => {
       localStorage.setItem(key, value);
     },
+    remove: async (key) => localStorage.removeItem(key),
   };
 }
 

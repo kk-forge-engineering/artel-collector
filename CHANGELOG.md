@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- Chrome extensions with a health channel import the app health collector from `@kk-forge/artel-collector/health`. Use the intake origin, the channel key and the product's error code list. The collector posts completed operations and lifecycle events to `/v1/public/health`, subject to the local reporting preference.
+- An anonymous envelope and the ordinary `opted_out` envelope omit `session`. On startup, the collector clears old anonymous session values, removes the field from unsealed anonymous envelopes and drops sealed anonymous envelopes that still carry it. Envelopes with a known ID can still carry a session.
+- To switch an installed Chrome extension to health, keep the channel key so the stored reporting preference carries over. A worker can keep a feedback-only uninstall page by passing its clean HTTPS URL as `uninstallPage`.
+
 ## 0.8.0
 
 - `trackPageViews` decides that a navigation leads to another page by the page the collector would send, as `getPage` gives it, not by `location.pathname`. A web app that keeps its routes in the hash passes a `getPage` that reads the route from the hash, and gets a `page_view` for each route where it got one per page load. The tracker also listens to `hashchange`, and a navigation that several events report still sends one.

@@ -1,4 +1,6 @@
 import { LifecycleEvent, type Envelope, type IdKind, type UsageEvent } from "./envelope.js";
+import { isLanguage, isVersion, primaryLanguage } from "./fields.js";
+import { isHealthEvent } from "./health.js";
 import { newRandomId, type Random } from "./random.js";
 import type { StorageAdapter } from "./storage.js";
 
@@ -98,6 +100,10 @@ interface Queue {
   /** Drops the envelopes that name a user or wait to, as when the user stops being identified. */
   removeIdentified(): Promise<QueuedEnvelope[]>;
   removeAllButOptOuts(): Promise<QueuedEnvelope[]>;
+  discardIncompatible(health?: {
+    key: string;
+    errorCodes: ReadonlySet<string>;
+  }): Promise<QueuedEnvelope[]>;
   /** Stores the id of a forget request, unless it is stored already. */
   addForget(id: string): Promise<void>;
   /** Resolves to the ids of the stored forget requests, oldest first. */
@@ -223,6 +229,7 @@ export function newQueue({
         last.body === undefined &&
         (last.awaitsId === true) === awaitsId &&
         sameFields(last.envelope, fields) &&
+        last.envelope.events.at(-1)?.day === event.day &&
         last.envelope.events.length < MAX_ENVELOPE_EVENTS &&
         fits(last.envelope, event);
       if (isOpen) {
@@ -259,13 +266,11 @@ export function newQueue({
         return undefined;
       }
       if (item.awaitsId === true && identity !== undefined) {
-        // The browser, the session and the id with its kind go after the other fields and the events. The body stored
-        // at this seal keeps that order on every attempt.
-        const { session, ...fields } = item.envelope;
+        // Events recorded before the id was known have no session. The body stored at this seal is reused on retry.
+        const { session: _session, ...fields } = item.envelope;
         item.envelope = {
           ...fields,
           ...(identity.browser !== undefined && { browser: identity.browser }),
-          session,
           id: identity.id,
           id_kind: identity.id_kind,
         };
@@ -299,6 +304,35 @@ export function newQueue({
       unsent(await removeWhere((item) => item.envelope.id !== undefined || item.awaitsId === true)),
 
     removeAllButOptOuts: async () => unsent(await removeWhere((item) => item.isOptOut !== true)),
+    discardIncompatible: async (health) => {
+      const items = await read();
+      const updated: QueuedEnvelope[] = [];
+      const dropped: QueuedEnvelope[] = [];
+      let changed = false;
+      for (const item of items) {
+        if (health !== undefined && !isHealthEnvelope(item, health)) {
+          dropped.push(item);
+          changed = true;
+          continue;
+        }
+        if (item.envelope.id === undefined && item.envelope.session !== undefined) {
+          changed = true;
+          // A sealed batch may already be stored by the intake. Its body cannot change on retry.
+          if (item.body !== undefined) {
+            continue;
+          }
+          delete item.envelope.session;
+        }
+        updated.push(item);
+      }
+      if (changed) {
+        await write(updated);
+      }
+      if (health !== undefined && (await readForgets()).length > 0) {
+        await writeForgets([]);
+      }
+      return unsent(dropped);
+    },
 
     addForget: async (id) => {
       const ids = await readForgets();
@@ -378,5 +412,28 @@ function isQueuedEnvelope(value: unknown): value is QueuedEnvelope {
     typeof envelope === "object" &&
     envelope !== null &&
     Array.isArray(Reflect.get(envelope, "events"))
+  );
+}
+
+function isHealthEnvelope(
+  item: QueuedEnvelope,
+  { key, errorCodes }: { key: string; errorCodes: ReadonlySet<string> },
+): boolean {
+  const { envelope } = item;
+  return (
+    item.awaitsId !== true &&
+    /^[0-9a-f]{16}$/.test(item.qid) &&
+    envelope.key === key &&
+    envelope.platform === "extension" &&
+    isVersion(envelope.version) &&
+    (envelope.ui_language === undefined ||
+      (isLanguage(envelope.ui_language) &&
+        envelope.ui_language === primaryLanguage(envelope.ui_language))) &&
+    Object.keys(envelope).every((name) =>
+      ["key", "platform", "version", "ui_language", "events", "batch"].includes(name),
+    ) &&
+    envelope.events.length > 0 &&
+    envelope.events.every((event) => isHealthEvent(event, errorCodes)) &&
+    (item.body === undefined || item.body === bodyOf(item))
   );
 }

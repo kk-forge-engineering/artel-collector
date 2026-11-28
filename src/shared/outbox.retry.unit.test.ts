@@ -178,7 +178,7 @@ describe("failures", () => {
   });
 
   it("keeps the newest 20 envelopes while the intake is down and reports the one it drops", async () => {
-    const harness = newHarness();
+    const harness = newHarness({ getId: () => USER_ID });
     harness.fetch.respondNextWith(503, 21);
 
     // The loop moves the clock 11 minutes past each event. This passes the session timeout, so each event starts a
@@ -200,8 +200,7 @@ describe("failures", () => {
     const harness = newHarness({ getId: () => undefined });
 
     for (let index = 0; index < 21; index++) {
-      await harness.collector.track("waiting");
-      harness.clock.jumpMinutes(11);
+      await harness.restart({ version: `4.2.${index}` }).track("waiting");
     }
     await harness.settle();
 
@@ -309,7 +308,7 @@ describe("failures", () => {
     other = harness.restart();
     await harness.collector.track("a");
     harness.clock.jumpMinutes(11);
-    await harness.collector.track("b");
+    await harness.restart({ version: "4.2.1" }).track("b");
 
     await harness.collector.flush();
     await harness.clock.advance(MAX_RETRY_DELAY_MS);

@@ -47,6 +47,9 @@ export class FakeChrome {
           listener(changes, "local");
         }
       },
+      remove: async (key: string): Promise<void> => {
+        this.items.delete(key);
+      },
       setAccessLevel: async (options: unknown): Promise<void> => {
         this.accessLevels.push(options);
       },

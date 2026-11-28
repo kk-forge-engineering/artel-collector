@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState } from "./exports.js";
+import { parseQueue } from "./queue.js";
 import {
   MAX_RETRY_DELAY_MS,
   newHarness,
@@ -55,21 +56,17 @@ describe("opted_out envelopes in the queue", () => {
 
   it("drops the oldest opted_out envelope, not the newest, when a third comes", async () => {
     const harness = newHarness({ transport: async () => 503 });
-    // The session of each queued envelope, oldest first.
-    const queuedSessions = async (): Promise<string[]> =>
-      Array.from(
-        ((await harness.storage.get(QUEUE_KEY)) ?? "").matchAll(/"session":"(\w+)"/g),
-        ([, session]) => session ?? "",
-      );
+    const queuedIds = async (): Promise<string[]> =>
+      (parseQueue(await harness.storage.get(QUEUE_KEY)) ?? []).map(({ qid }) => qid);
     await harness.collector.setState(AnalyticsState.OptedOut);
-    const [oldest] = await queuedSessions();
+    const [oldest] = await queuedIds();
     await harness.collector.setState(AnalyticsState.Anonymous);
     for (let index = 0; index < 2; index++) {
       await harness.collector.setState(AnalyticsState.OptedOut);
       await harness.collector.setState(AnalyticsState.Anonymous);
     }
 
-    const left = await queuedSessions();
+    const left = await queuedIds();
     expect(left).toHaveLength(2);
     expect(left).not.toContain(oldest);
   });

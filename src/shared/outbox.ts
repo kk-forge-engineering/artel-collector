@@ -66,6 +66,7 @@ interface Outbox {
   forget(id: string): Promise<QueuedEnvelope[]>;
   /** Drops the envelopes that name a user or that await an id. Resolves to those whose marks may go back. */
   discardIdentified(): Promise<QueuedEnvelope[]>;
+  discardIncompatible(errorCodes?: ReadonlySet<string>): Promise<QueuedEnvelope[]>;
   /** Resolves to whether the storage holds an envelope or a forget request to send. */
   holdsRequests(): Promise<boolean>;
 }
@@ -81,6 +82,7 @@ export function newOutbox({
   transport,
   forgetTransport,
   identify,
+  maySend,
   giveBack,
   sendDelayMs,
   clock,
@@ -101,6 +103,7 @@ export function newOutbox({
    * id yet. The envelope then stays queued. It takes `lock` itself, so the outbox calls it outside the lock.
    */
   identify: () => Promise<Identity | undefined>;
+  maySend?: (() => Promise<boolean>) | undefined;
   /**
    * Gives back the marks of an envelope too old to send that no request carried. The outbox calls it under `lock`.
    */
@@ -208,6 +211,9 @@ export function newOutbox({
    */
   async function sendLeased(): Promise<void> {
     const { taken, waitMs } = await lock(async () => {
+      if (maySend !== undefined && !(await maySend())) {
+        return { taken: undefined, waitMs: undefined };
+      }
       const wait = await retryWaitMs();
       return {
         waitMs: wait,
@@ -219,7 +225,9 @@ export function newOutbox({
     });
     if (taken === undefined) {
       // The pending retry of this context sends at the end of the wait. Without one, a send of its own does.
-      sendWithin(waitMs);
+      if (waitMs !== undefined) {
+        sendWithin(waitMs);
+      }
       return;
     }
     const { forgets, leased } = taken;
@@ -301,13 +309,36 @@ export function newOutbox({
    */
   async function sendInOrder(leased: QueuedEnvelope[], unsettled: Set<string>): Promise<void> {
     const today = utcDateAt(clock.now());
+    const start = (body: string) =>
+      deliver({ body, transport, what: "an envelope", reportError, clock });
     for (const item of leased) {
-      const sealed = await sealIfItMayLeave(item, unsettled);
+      // Keep the health state locked from the last preference check until the request starts.
+      const healthSend =
+        maySend === undefined
+          ? undefined
+          : await lock(async () => {
+              if (!(await maySend())) {
+                return undefined;
+              }
+              const sealed = await queue.seal(item.qid, leaseTerms());
+              if (sealed === undefined) {
+                return undefined;
+              }
+              return {
+                sealed,
+                pending: sealed.envelope.events.every((event) => isRecent(event, today))
+                  ? start(sealed.body)
+                  : undefined,
+              };
+            });
+      if (maySend !== undefined && healthSend === undefined) {
+        continue;
+      }
+      const sealed = healthSend?.sealed ?? (await sealIfItMayLeave(item, unsettled));
       if (sealed === undefined) {
         continue;
       }
-      // An envelope goes whole or not at all. The intake drops a repeat only when it matches the first body byte for
-      // byte, and a repeat with fewer events would not match.
+      // A retry uses the exact sealed body. If any event is stale, drop the whole envelope.
       const { envelope, body, isRepeat } = sealed;
       if (!envelope.events.every((event) => isRecent(event, today))) {
         reportDropped(envelope.events.length);
@@ -318,13 +349,7 @@ export function newOutbox({
         unsettled.delete(item.qid);
         continue;
       }
-      const { isSettled, askedWaitMs } = await deliver({
-        body,
-        transport,
-        what: "an envelope",
-        reportError,
-        clock,
-      });
+      const { isSettled, askedWaitMs } = await (healthSend?.pending ?? start(body));
       if (!isSettled) {
         await waitForRetry(askedWaitMs);
         return;
@@ -358,6 +383,8 @@ export function newOutbox({
       return queue.removeId(id);
     },
     discardIdentified: () => queue.removeIdentified(),
+    discardIncompatible: (errorCodes) =>
+      queue.discardIncompatible(errorCodes === undefined ? undefined : { key, errorCodes }),
     holdsRequests: () => queue.holdsRequests(),
   };
 }

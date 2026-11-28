@@ -2,7 +2,46 @@
 
 Sends a product's analytics events to the intake service. It runs in a website, a web app, a Chrome extension or a desktop window, and has no runtime dependencies.
 
-The collector marks the first event of each local day, week, month, quarter and year, and adds the install age to those events, so the intake counts active users per period without a user id. The collector also keeps a session, holds every event in a queue in storage until the intake takes it, and keeps the user's analytics state.
+The collector marks the first event of each local day, week, month, quarter and year, and adds the install age to those events, so the intake counts active users per period without a user id. For events with an id the collector also keeps a session. It holds every event in a queue in storage until the intake takes it, and keeps the user's analytics state.
+
+## App health for extensions
+
+Use `@kk-forge/artel-collector/health` in a Chrome extension whose Artel channel is in health mode. It posts to
+`/v1/public/health` on the intake origin.
+
+```ts
+import { newHealthCollector } from "@kk-forge/artel-collector/health";
+
+const health = newHealthCollector({
+  key: config.healthKey,
+  origin: config.healthOrigin,
+  uiLanguage: "en",
+  errorCodes: ["upload_failed"],
+});
+
+await health.record({
+  feature: "convert",
+  entry: "popup",
+  outcome: "error",
+  error_code: "upload_failed",
+  duration_ms: 420,
+});
+```
+
+Create the collector at the top level of the service worker and in any extension page that records operations.
+A content script calls `newHealthContentScriptCollector().record(operation)` to have the worker record it.
+The worker sends `installed` and `updated` from Chrome's lifecycle events.
+
+`record` takes `feature`, `entry` and `outcome` (`ok` or `error`). An error carries an `error_code` from the
+product's `errorCodes` list. Set the same list in Artel for the channel. `duration_ms` is optional and takes a
+whole number from 0 to 86,400,000 inclusive. Out-of-range values are refused. The optional operation details are
+`tool`, `step`, `how` and `count`. Use fixed codes for labels and never include request text, filenames, URLs
+or exception messages.
+
+Events carry the build version, platform, the primary subtag of the interface language when supplied, first-of-period marks and install age buckets.
+They carry no id, session, page or referrer. Use Chrome 102 or later for trusted storage. The worker clears any
+previous uninstall URL or replaces it with `uninstallPage`, a feedback-only HTTPS URL without a query or fragment. `isEnabled()` reads the stored preference, which defaults to enabled.
+`setEnabled(false)` clears pending events and stops recording. It sends no last event. `flush()` sends pending events.
 
 ## Install
 
@@ -129,7 +168,7 @@ Each constructor throws a `TypeError` that names the option when the options wou
   A site whose paths carry another secret or person, such as `/share/<token>` or `/u/<name>`, passes its own `getPage` that returns the route pattern, such as `/share/:token`.
 
 - `lock`: a function that takes an async operation, runs it while no other context that shares `storage` runs one, and resolves or rejects as the operation does. It must run the operation exactly once and hold the lock until the operation's promise settles, as `navigator.locks.request` does. The collector never asks for it while it holds it. The collector runs each method, and each queue change of a send, under it. Without it, two contexts recording at once may both mark the first event of a day, overwrite each other's queued events or send one envelope twice. The rule that no event goes under another user's id then holds only within one context, and so does the opt-out: an event another context records during `setState('opted_out')` may still leave. Each collector runs one of its own operations at a time with or without a lock.
-- `sessionIdleMinutes`: minutes without events that end a session, 10 by default. A value that is not a finite number from 0 takes the default, and so does one of `sendDelaySeconds`.
+- `sessionIdleMinutes`: minutes without events that end a session with an id, 10 by default. A value that is not a finite number from 0 takes the default, and so does one of `sendDelaySeconds`.
 - `sendDelaySeconds`: the longest an event waits in the queue before a send starts, 5 by default. A collector's first event does not wait, as "Sending" describes.
 - `clock`: time and timers, the host's own by default. Tests pass a fake. A `Clock` has `now()`, which returns milliseconds since the epoch, and `setTimeout(callback, delayMs)`, which returns the function that cancels that timer. A cancel after the timer ran does nothing. The port names no timer handle, whose type is a number in the DOM typings and an object in the Node ones. A clock written for 0.4 drops `clearTimeout` and returns the cancel from `setTimeout` instead, and `TimerHandle` is no longer exported.
 - `onError`: receives each failure the collector does not retry. An `onError` that throws is ignored. A report quotes at most 64 characters of host or stored text, and never a page. It receives:
@@ -163,8 +202,8 @@ Every method returns a promise that resolves and never rejects. A failure goes t
 
 - `installed()` sends `installed` once per install. A later call sends no event. The extension's service worker and `newDesktopCollector` call it and `updated()` themselves, and a website calls it where its product counts an install. In the `opted_out` state it sends nothing and marks nothing, so a user who turns analytics back on still sends it.
 - `updated()` sends `updated` when `version` differs from the last version `installed()` or `updated()` stored, or when none is stored. Call it after `installed()`, so that a fresh install does not also count as an update. In the `opted_out` state it sends nothing and marks nothing.
-- `setState(state)` stores the user's analytics state and starts a new session, so events from before and after the change share no session. The same state again does nothing.
-  - To `opted_out`: stores the state first, then drops the events not sent yet and sends one `opted_out`. It goes at once, or at the end of a retry wait that is running. An `opted_out` from an earlier opt-out that has not gone yet stays queued. The `opted_out` goes in an envelope of its own, with no id, no browser, no first-of-period mark and no age, so no count of active users takes it. Its session is new and no other event shares it. A run that stops after storing the state drops the queue on the first call of its next run. If that run stopped before it queued the `opted_out`, none is sent.
+- `setState(state)` stores the user's analytics state and ends any existing session. The same state again does nothing.
+  - To `opted_out`: stores the state first, then drops the events not sent yet and sends one `opted_out`. It goes at once, or at the end of a retry wait that is running. An `opted_out` from an earlier opt-out that has not gone yet stays queued. The `opted_out` goes in an envelope of its own, with no id, no browser, no first-of-period mark and no age, so no count of active users takes it. A run that stops after storing the state drops the queue on the first call of its next run. If that run stopped before it queued the `opted_out`, none is sent.
   - From `pseudonymous` or `identified`, to any other state: forgets the last id, as `forget(id)` does, and drops the queued events of that state, those waiting for an id included. A change between `pseudonymous` and `identified` thus counts as another user. The collector also deletes the install id when the user leaves `pseudonymous`. A change to a state without an id stores the state first. A run that stops after that forgets the last id on the first call of its next run. A change between `pseudonymous` and `identified` forgets the last id first, so a run that stops in between keeps the old state with its id forgotten.
   - A state above the channel's mode is refused: a type error, and `onError` in untyped code.
 - `getState()` resolves to the stored state, `anonymous` until the user chose. It also resolves to `anonymous` when the storage fails, whatever the user chose, and reports the failure. On the first call of any method, a stored state above the channel's mode becomes `anonymous`, as `setState('anonymous')` would make it, as after the admin lowered the mode.
@@ -196,7 +235,8 @@ The marks an event takes go back when the collector drops it before any request 
 
 ## Storage
 
-`storage` is any `{ get(key), set(key, value) }` over strings that returns promises. `get` resolves to the stored string, or to `undefined` for a missing key. The collector reads any other value, such as the `null` of some stores, as a missing key. A `get` must see every `set` that resolved before it, in every context that shares the storage. The collector never removes a key. Every key is `artel.<key>.<name>`, where `<key>` is the channel key, such as `artel.site-aa131n3j11.queue`. Collectors of different keys over one storage share no stored value, so a live and a test build, or two products on one origin, keep their own state and queues. The storage holds the state, the install day, the install mark and the last version. It also holds the session and the time of its last event, the first-of-period marks, the active days and the end of the retry wait. It holds the queue, whose envelopes of the states with an id carry the id, the last id the collector sent, the install id of the pseudonymous state and the forget requests not answered yet. The queue is one value: up to 20 envelopes of up to 60 kB each, and the request body of each sealed one.
+`storage` is any `{ get(key), set(key, value) }` over strings that returns promises. `get` resolves to the stored string, or to `undefined` for a missing key. The collector reads any other value, such as the `null` of some stores, as a missing key. A `get` must see every `set` that resolved before it, in every context that shares the storage. The collector can remove keys through an optional `remove(key)` method. Every key is `artel.<key>.<name>`, where `<key>` is the channel key, such as `artel.site-aa131n3j11.queue`. Collectors of different keys over one storage share no stored value, so a live and a test build, or two products on one origin, keep their own state and queues. The storage holds the state, the install day, the install mark and the last version. It also holds the session and the time of its last event, the first-of-period marks, the active days and the end of the retry wait. It holds the queue, whose envelopes of the states with an id carry the id, the last id the collector sent, the install id of the pseudonymous state and the forget requests not answered yet. The queue is one value: up to 20 envelopes of up to 60 kB each, and the request body of each sealed one.
+Adapters may also provide `remove(key)` to delete old session keys. Get/set-only adapters clear their values.
 
 A `get` or `set` that fails goes to `onError`, and the method that called it stops there. A `set` that fails while an event is recorded loses the event, and the event gives back its marks.
 
@@ -210,10 +250,11 @@ The package publishes one entry point for each layer of its code:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `@kk-forge/artel-collector`              | what reads no host: the types, the enums, `detectBrowser`, the checks of "Testing" and `newMemoryStorage()`                    |
 | `@kk-forge/artel-collector/infra`        | what reads the host: `newCollector`, `newHttpTransport`, `systemClock`, and the code of "Website or web app" and "Desktop app" |
-| `@kk-forge/artel-collector/infra/chrome` | the code of "Chrome extension", the only code of the package that calls `chrome`                                               |
+| `@kk-forge/artel-collector/infra/chrome` | the ordinary Chrome extension collector                                                                                        |
+| `@kk-forge/artel-collector/health`       | the app health collector and content-script adapter for Chrome extensions                                                      |
 | `@kk-forge/artel-collector/testing`      | the helpers of "Testing"                                                                                                       |
 
-An extension imports `infra/chrome` only in its entrypoints, the scripts that start its service worker, its pages and its content scripts.
+An extension imports its collector entrypoint in the scripts that start its service worker, pages and content scripts. An extension in health mode imports only `@kk-forge/artel-collector/health`.
 
 ### Website or web app
 
@@ -310,7 +351,7 @@ void analytics.track("link_shared", { target: "clipboard" });
 
 ## What is sent
 
-One envelope per request. An envelope in the `anonymous` state, in any channel:
+One envelope per request. An envelope in the `anonymous` state of an ordinary channel:
 
 ```json
 {
@@ -319,7 +360,6 @@ One envelope per request. An envelope in the `anonymous` state, in any channel:
   "version": "4.2.0",
   "browser_language": "pt",
   "ui_language": "en",
-  "session": "k3j9x2m1qa0b",
   "events": [
     {
       "name": "report_exported",
@@ -338,7 +378,7 @@ One envelope per request. An envelope in the `anonymous` state, in any channel:
 - `age_days` comes with the `day` mark, and counts days since install. `age_months` comes with the `month` mark, which a `quarter` or `year` mark always comes with, and counts months since install. The install date is the local date of the collector's first use. In the `anonymous` state each age is the lowest value of its bucket:
   - `age_days`: `0`, `1`, `2` for 2 to 6 days, `7` for 7 to 13, `14` for 14 to 29, and `30` for 30 or more.
   - `age_months`: `0`, `1`, `2`, `3` for 3 to 5 months, `6` for 6 to 11, `12` for 12 to 23, and `24` for 24 or more.
-- `session` is 12 random characters from `[0-9a-z]`, a window of activity. A new one starts after `sessionIdleMinutes` without events, with the event that takes the `day` mark, at each change of state and when another id comes.
+- `session` is present only with `id`. It is 12 random characters from `[0-9a-z]`, a window of activity. A new one starts after `sessionIdleMinutes` without events, at local midnight, after each change of state and when another id comes.
 - `batch` is 16 random hex characters per envelope, the same on every attempt to send it.
 - `key`, `platform` and `version` name the channel and the build, as "Options" describes.
 - `params` holds what the product passed to `track`.
@@ -351,6 +391,7 @@ In the `pseudonymous` and `identified` states the ages are exact: `age_days` fro
   "browser_language": "pt-BR",
   "ui_language": "en",
   "browser": { "name": "chrome", "major": 131 },
+  "session": "k3j9x2m1qa0b",
   "id": "3f9a0c4e1b7d26a85e0f4c91d2b7a630",
   "id_kind": "pseudonymous"
 }

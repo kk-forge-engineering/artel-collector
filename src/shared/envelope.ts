@@ -13,7 +13,7 @@ export type Platform = (typeof Platform)[keyof typeof Platform];
 
 /**
  * The events that only the collector sends: `installed` and `updated` from its own methods, and `opted_out` when the
- * user turns analytics off.
+ * user stops collection.
  */
 export const LifecycleEvent = {
   Installed: "installed",
@@ -77,7 +77,7 @@ export interface Envelope {
   ui_language?: string;
   /** Present only on a web or extension envelope that carries an `id`. */
   browser?: Browser;
-  session: string;
+  session?: string;
   id?: string;
   /** Present exactly when `id` is. The intake keeps the id only when its kind is within the channel's mode. */
   id_kind?: IdKind;

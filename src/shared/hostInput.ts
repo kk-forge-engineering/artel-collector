@@ -249,5 +249,10 @@ export function newStringStorage(storage: StorageAdapter): StorageAdapter {
       return typeof value === "string" ? value : undefined;
     },
     set: (key, value) => storage.set(key, value),
+    ...(storage.remove !== undefined && {
+      remove: async (key: string) => {
+        await storage.remove?.(key);
+      },
+    }),
   };
 }

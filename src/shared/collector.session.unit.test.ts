@@ -1,10 +1,51 @@
 import { describe, expect, it } from "vitest";
 import { AnalyticsState } from "./exports.js";
-import { newHarness, USER_ID } from "#tests/harness.js";
+import { KEY, newHarness, QUEUE_KEY, storageKey, USER_ID, VERSION } from "#tests/harness.js";
 
 describe("session", () => {
-  it("keeps one session id of 12 characters from [0-9a-z] while the user stays active", async () => {
+  it("leaves session out of anonymous and opt-out envelopes and storage", async () => {
     const harness = newHarness();
+    await harness.collector.track("a");
+    await harness.collector.flush();
+    await harness.collector.setState(AnalyticsState.OptedOut);
+
+    expect(harness.fetch.requests).toHaveLength(2);
+    for (const { envelope } of harness.fetch.requests) {
+      expect(envelope).not.toHaveProperty("session");
+    }
+    expect(await harness.storage.get(storageKey("session"))).toBeUndefined();
+    expect(await harness.storage.get(storageKey("session_seen"))).toBeUndefined();
+  });
+
+  it("removes anonymous sessions from storage and never retries an old sealed body", async () => {
+    const harness = newHarness();
+    await harness.storage.set(storageKey("session"), "old");
+    await harness.storage.set(storageKey("session_seen"), "42");
+    const stored = {
+      key: KEY,
+      platform: "extension",
+      version: VERSION,
+      session: "old",
+      events: [{ name: "pending", day: "2026-10-29" }],
+    };
+    const sent = { ...stored, events: [{ name: "sent", day: "2026-10-29" }] };
+    await harness.storage.set(
+      QUEUE_KEY,
+      JSON.stringify([
+        { qid: "sealed", envelope: sent, body: JSON.stringify({ ...sent, batch: "sealed" }) },
+        { qid: "open", envelope: stored },
+      ]),
+    );
+    await harness.restart().flush();
+
+    expect(harness.fetch.eventNames).toEqual(["pending"]);
+    expect(harness.fetch.requests[0]?.envelope).not.toHaveProperty("session");
+    expect(await harness.storage.get(storageKey("session"))).toBeUndefined();
+    expect(await harness.storage.get(storageKey("session_seen"))).toBeUndefined();
+  });
+
+  it("keeps one session id of 12 characters from [0-9a-z] while the user stays active", async () => {
+    const harness = newHarness({ getId: () => USER_ID });
 
     await harness.collector.track("a");
     for (let step = 0; step < 4; step++) {
@@ -20,7 +61,7 @@ describe("session", () => {
   });
 
   it("starts a new session after 10 minutes without events", async () => {
-    const harness = newHarness();
+    const harness = newHarness({ getId: () => USER_ID });
 
     await harness.collector.track("a");
     harness.clock.jumpMinutes(10);
@@ -33,7 +74,7 @@ describe("session", () => {
   });
 
   it("keeps the session through the idle time the host sets", async () => {
-    const harness = newHarness({ sessionIdleMinutes: 30 });
+    const harness = newHarness({ getId: () => USER_ID, sessionIdleMinutes: 30 });
 
     await harness.collector.track("a");
     harness.clock.jumpMinutes(29);
@@ -44,7 +85,7 @@ describe("session", () => {
   });
 
   it("starts a new session on a new local day, however active the user stays", async () => {
-    const harness = newHarness();
+    const harness = newHarness({ getId: () => USER_ID });
     harness.clock.setLocal("2026-10-29T23:58:00");
 
     await harness.collector.track("a");
@@ -57,8 +98,30 @@ describe("session", () => {
     expect(first).not.toBe(second);
   });
 
+  it("rotates at midnight when the first event of the day is waiting for an id", async () => {
+    let id: string | undefined = USER_ID;
+    const harness = newHarness({ getId: () => id });
+    harness.clock.setLocal("2026-10-29T23:58:00");
+    await harness.collector.track("before");
+    await harness.collector.flush();
+
+    id = undefined;
+    harness.clock.jumpMinutes(3);
+    await harness.collector.track("waiting");
+    id = USER_ID;
+    await harness.collector.track("after");
+    await harness.collector.flush();
+
+    const [before, waiting, after] = harness.fetch.requests.map((request) => request.envelope);
+    expect(before?.session).toBeDefined();
+    expect(waiting?.id).toBe(USER_ID);
+    expect(waiting).not.toHaveProperty("session");
+    expect(after?.session).toBeDefined();
+    expect(after?.session).not.toBe(before?.session);
+  });
+
   it("keeps the session across a restart of the host", async () => {
-    const harness = newHarness();
+    const harness = newHarness({ getId: () => USER_ID });
     await harness.collector.track("a");
     await harness.settle();
 
